@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -48,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -64,6 +66,7 @@ import androidx.media3.ui.compose.material3.buttons.PlayPauseButton
 import androidx.media3.ui.compose.material3.buttons.PreviousButton
 import androidx.media3.ui.compose.material3.indicator.PositionAndDurationText
 import androidx.media3.ui.compose.material3.indicator.ProgressSlider
+import br.com.player.player.AspectRatioMode
 import br.com.player.ui.theme.PlayerOverlayBottom
 import br.com.player.ui.theme.PlayerOverlayMid
 import br.com.player.ui.theme.PlayerOverlayTop
@@ -80,6 +83,7 @@ private const val CONTROLS_HIDE_TIMEOUT_MS = 3000L
 @Composable
 fun VideoPlayerScreen(
     viewModel: PlayerViewModel = viewModel(),
+    aspectRatioMode: AspectRatioMode = AspectRatioMode.FillBounds,
     controlsContent: (@Composable (PlayerUiState, Player, (PlayerIntent) -> Unit) -> Unit)? = null
 ) {
     val uiState = viewModel.uiState.collectAsState()
@@ -117,6 +121,30 @@ fun VideoPlayerScreen(
         }
     }
 
+    // ── Aspect ratio ────────────────────────────────────────────────────────────
+    // Duas camadas trabalham juntas:
+    //
+    //  1. contentModifier (Compose layout) — define o tamanho/forma do container
+    //     do ContentFrame dentro do Box negro (letterbox/pillarbox vêm do fundo).
+    //
+    //  2. contentScale (Media3 nativo, equivalente ao ResizeMode do PlayerView XML)
+    //     — controla como o ExoPlayer renderiza o vídeo dentro do frame:
+    //       • Fit         → mantém a proporção intrínseca do vídeo (padrão)
+    //       • FillBounds  → estica para preencher sem barras (Fill mode)
+    //
+    val contentModifier = when (aspectRatioMode) {
+        is AspectRatioMode.FillBounds -> Modifier.fillMaxSize()
+        is AspectRatioMode.Crop       -> Modifier.fillMaxSize()
+        is AspectRatioMode.Inside     -> Modifier.fillMaxSize()
+        is AspectRatioMode.Fixed      -> Modifier.aspectRatio(aspectRatioMode.ratio)
+    }
+    val contentScale = when (aspectRatioMode) {
+        is AspectRatioMode.FillBounds -> ContentScale.FillBounds
+        is AspectRatioMode.Crop       -> ContentScale.Crop
+        is AspectRatioMode.Inside     -> ContentScale.Inside
+        is AspectRatioMode.Fixed      -> ContentScale.Fit
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -124,11 +152,13 @@ fun VideoPlayerScreen(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
-            ) { areControlsVisible = !areControlsVisible }
+            ) { areControlsVisible = !areControlsVisible },
+        contentAlignment = Alignment.Center
     ) {
         ContentFrame(
             player = player,
-            modifier = Modifier.fillMaxSize()
+            modifier = contentModifier,
+            contentScale = contentScale
         )
 
         // Barra de buffering no topo — menos obstrutiva que spinner centralizado
@@ -143,7 +173,9 @@ fun VideoPlayerScreen(
         }
 
         // Overlay com animação spring-based (slide + fade)
+        // fillMaxSize garante que o overlay cobre todo o Box (incluindo barras do letterbox)
         AnimatedVisibility(
+            modifier = Modifier.fillMaxSize(),
             visible = areControlsVisible,
             enter = slideInVertically(
                 animationSpec = androidx.compose.animation.core.spring(

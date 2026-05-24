@@ -14,6 +14,7 @@ Este é um **app Android de reprodução de vídeo** (como um YouTube simplifica
 - Navegar entre uma lista de vídeos (playlist)
 - Girar o celular e ter tela cheia automática
 - Ver o progresso do carregamento e controles de play/pause/avançar
+- Escolher o **aspect ratio** (proporção) de exibição do vídeo em tempo real
 
 ---
 
@@ -76,6 +77,9 @@ Antes de rodar o projeto, você precisa ter instalado:
 │  🔗 URL do Vídeo (HLS/DASH)   [X]  │  ← Campo de URL
 │                                     │
 │  Aplicar corte de duração    [OFF]  │  ← Switch opcional
+│                                     │
+│  Proporção (Aspect Ratio)      ▾   │  ← Dropdown (FillBounds / Crop /
+│  Como o vídeo preenche o player     │    Inside / 16:9 / 4:3 / 1:1 / 9:16)
 │                                     │
 │  [▶️ Carregar e Reproduzir]         │  ← Botão principal
 │                                     │
@@ -247,6 +251,55 @@ data class PlayerConfig(
 
 > 💡 **Por que usar data class?** Kotlin `data class` gera automaticamente `equals()`, `hashCode()` e `copy()`. O `copy()` é muito útil no MVI: `estado.copy(isPlaying = true)` cria um novo estado sem modificar o original.
 
+#### `AspectRatioMode` — Controle de Proporção
+
+Também definida em `PlayerConfig.kt`, esta sealed class controla **como o vídeo é exibido** dentro do player. Ela atua em duas camadas complementares:
+
+| Camada | Responsável | O que faz |
+|---|---|---|
+| **Layout** | `Modifier.aspectRatio()` (Compose) | Define o tamanho/forma do container |
+| **Renderização** | `ContentScale` (Media3 nativo) | Define como o ExoPlayer renderiza o vídeo dentro do frame |
+
+```kotlin
+sealed class AspectRatioMode {
+
+    // ── Modos de escala (container fullscreen) ─────────────────────────────
+    data object FillBounds : AspectRatioMode() // Estica → pode distorcer
+    data object Crop       : AspectRatioMode() // Zoom/corte → sem distorção
+    data object Inside     : AspectRatioMode() // Fit sem ampliar além do original
+
+    // ── Modo de proporção fixa ──────────────────────────────────────────────
+    data class Fixed(val widthRatio: Int, val heightRatio: Int) : AspectRatioMode()
+
+    companion object {
+        val RATIO_16_9 = Fixed(16, 9)
+        val RATIO_4_3  = Fixed(4, 3)
+        val RATIO_1_1  = Fixed(1, 1)
+        val RATIO_9_16 = Fixed(9, 16)
+    }
+}
+```
+
+**Qual a diferença entre os modos?**
+
+```
+Vídeo 16:9 em um celular 9:16 (retrato):
+
+ FillBounds          Crop               Inside           Fixed 16:9
+┌─────────┐        ┌─────────┐        ┌─────────┐       ┌─────────┐
+│▓▓▓▓▓▓▓▓▓│        │░░░░░░░░░│        │         │       │         │
+│▓▓▓▓▓▓▓▓▓│        │▓▓▓▓▓▓▓▓▓│        │▓▓▓▓▓▓▓▓▓│       │▓▓▓▓▓▓▓▓▓│
+│▓▓▓▓▓▓▓▓▓│ →      │▓▓▓▓▓▓▓▓▓│ →      │▓▓▓▓▓▓▓▓▓│ →     │▓▓▓▓▓▓▓▓▓│
+│▓▓▓▓▓▓▓▓▓│        │▓▓▓▓▓▓▓▓▓│        │▓▓▓▓▓▓▓▓▓│       │▓▓▓▓▓▓▓▓▓│
+│▓▓▓▓▓▓▓▓▓│        │░░░░░░░░░│        │         │       │         │
+└─────────┘        └─────────┘        └─────────┘       └─────────┘
+Distorcido         Recortado         Com barras        Container 16:9
+                  (conteúdo          (sem ampliar)    com barras pretas
+                  cropped top/bot)
+```
+
+> 💡 **Por que `sealed class` e não `enum`?** O modo `Fixed` precisa carregar dados (`widthRatio`, `heightRatio`). Enums não suportam campos por instância. A `sealed class` permite ter tanto `data object` (sem estado) quanto `data class` (com estado) na mesma hierarquia.
+
 ---
 
 ### 7.2 🗄️ `CacheManager.kt` — O Cofre de Vídeos
@@ -390,7 +443,42 @@ Analogia: é como preparar uma fila de restaurante. O próximo cliente (distânc
 
 ### 7.4 🖥️ `VideoPlayerScreen.kt` — A Interface Visual
 
-Este é o Composable que desenha a tela do player. Vamos entender as partes mais importantes:
+Este é o Composable que desenha a tela do player. Ele aceita um parâmetro `aspectRatioMode` para controlar como o vídeo é exibido:
+
+```kotlin
+@Composable
+fun VideoPlayerScreen(
+    viewModel: PlayerViewModel = viewModel(),
+    aspectRatioMode: AspectRatioMode = AspectRatioMode.FillBounds, // padrão
+    controlsContent: ... // UI de controles customizável
+)
+```
+
+Internamente, o modo escolhido é aplicado em duas camadas:
+
+```kotlin
+// Camada 1: tamanho do container (Compose layout)
+val contentModifier = when (aspectRatioMode) {
+    is AspectRatioMode.FillBounds,
+    is AspectRatioMode.Crop,
+    is AspectRatioMode.Inside -> Modifier.fillMaxSize()
+    is AspectRatioMode.Fixed  -> Modifier.aspectRatio(aspectRatioMode.ratio)
+}
+
+// Camada 2: renderização do vídeo (Media3 nativo — equivalente ao ResizeMode do PlayerView XML)
+val contentScale = when (aspectRatioMode) {
+    is AspectRatioMode.FillBounds -> ContentScale.FillBounds
+    is AspectRatioMode.Crop       -> ContentScale.Crop
+    is AspectRatioMode.Inside     -> ContentScale.Inside
+    is AspectRatioMode.Fixed      -> ContentScale.Fit
+}
+
+ContentFrame(player = player, modifier = contentModifier, contentScale = contentScale)
+```
+
+O `Box` externo sempre tem `fillMaxSize()` e fundo preto — as barras pretas do letterbox/pillarbox aparecem naturalmente como o fundo.
+
+Vamos entender as demais partes importantes:
 
 #### DisposableEffect — Fechar a Torneira ao Sair
 
@@ -566,6 +654,12 @@ Framework moderno do Android para criar interfaces. Em vez de XML, você escreve
 ### DisposableEffect
 Um efeito colateral em Compose que tem um **ciclo de vida**. O código dentro dele roda quando o Composable entra na tela, e o bloco `onDispose` roda quando o Composable sai da tela. Essencial para liberar recursos (player, sensores, listeners).
 
+### AspectRatioMode
+Sealed class que define como o vídeo é dimensionado no player. Atua em duas camadas: `Modifier.aspectRatio()` (Compose) controla o tamanho do container, e `ContentScale` (Media3) controla a renderização do vídeo dentro do frame. Modos disponíveis: `FillBounds` (estica), `Crop` (zoom/recorte), `Inside` (fit sem ampliar), `Fixed(w, h)` (proporção fixa com letterbox/pillarbox).
+
+### ContentScale (Media3 / Compose)
+Interface do Compose usada pelo `ContentFrame` do Media3 para controlar o `ResizeMode` do ExoPlayer de forma declarativa. Equivalente ao `setResizeMode()` do `PlayerView` XML. Os valores mais usados: `Fit` (encaixa preservando proporção), `FillBounds` (estica para preencher), `Crop` (zoom para preencher sem distorção), `Inside` (encaixa sem ampliar além do original).
+
 ### LRU (Least Recently Used)
 Estratégia de cache que descarta primeiro o item acessado há mais tempo. Se o cache está cheio (200 MB) e você quer guardar mais dados, o vídeo que você assistiu há mais tempo é removido primeiro.
 
@@ -593,8 +687,20 @@ viewModel.handleIntent(
     )
 )
 
-// Exibe o player na tela
+// Exibe o player na tela (padrão: FillBounds)
 VideoPlayerScreen(viewModel = viewModel)
+
+// Ou com aspect ratio fixo 16:9
+VideoPlayerScreen(
+    viewModel = viewModel,
+    aspectRatioMode = AspectRatioMode.RATIO_16_9
+)
+
+// Ou com zoom/recorte (sem barras, sem distorção)
+VideoPlayerScreen(
+    viewModel = viewModel,
+    aspectRatioMode = AspectRatioMode.Crop
+)
 ```
 
 ### Reagindo ao Fim do Vídeo

@@ -35,11 +35,15 @@ import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -64,6 +68,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import br.com.player.player.AspectRatioMode
 import br.com.player.player.CacheManager
 import br.com.player.player.MediaItemConfig
 import br.com.player.player.PlayerConfig
@@ -104,6 +109,21 @@ fun MainScreen(viewModel: PlayerViewModel = viewModel()) {
     var applyClip by remember { mutableStateOf(false) }
     var clipDurationMs by remember { mutableStateOf("10000") }
     var isLoading by remember { mutableStateOf(false) }
+
+    // Opções de aspect ratio disponíveis no seletor
+    val aspectRatioOptions = remember {
+        listOf(
+            "FillBounds" to AspectRatioMode.FillBounds,
+            "Crop"       to AspectRatioMode.Crop,
+            "Inside"     to AspectRatioMode.Inside,
+            "16:9"       to AspectRatioMode.RATIO_16_9,
+            "4:3"        to AspectRatioMode.RATIO_4_3,
+            "1:1"        to AspectRatioMode.RATIO_1_1,
+            "9:16"       to AspectRatioMode.RATIO_9_16,
+        )
+    }
+    var aspectRatioMode by remember { mutableStateOf<AspectRatioMode>(AspectRatioMode.FillBounds) }
+    var aspectRatioExpanded by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -283,6 +303,48 @@ fun MainScreen(viewModel: PlayerViewModel = viewModel()) {
 
                             Spacer(modifier = Modifier.height(16.dp))
 
+                            // Seletor de Aspect Ratio
+                            val selectedLabel = aspectRatioOptions
+                                .first { it.second == aspectRatioMode }.first
+                            ExposedDropdownMenuBox(
+                                expanded = aspectRatioExpanded,
+                                onExpandedChange = { aspectRatioExpanded = it },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedTextField(
+                                    value = selectedLabel,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("Proporção (Aspect Ratio)") },
+                                    supportingText = { Text("Como o vídeo preenche o player") },
+                                    trailingIcon = {
+                                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = aspectRatioExpanded)
+                                    },
+                                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                                    modifier = Modifier
+                                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                                        .fillMaxWidth(),
+                                    shape = MaterialTheme.shapes.medium
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = aspectRatioExpanded,
+                                    onDismissRequest = { aspectRatioExpanded = false }
+                                ) {
+                                    aspectRatioOptions.forEach { (label, mode) ->
+                                        DropdownMenuItem(
+                                            text = { Text(label) },
+                                            onClick = {
+                                                aspectRatioMode = mode
+                                                aspectRatioExpanded = false
+                                            },
+                                            contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
                             // Botão com estado de loading
                             Button(
                                 onClick = {
@@ -333,7 +395,10 @@ fun MainScreen(viewModel: PlayerViewModel = viewModel()) {
             }
 
             Box(modifier = Modifier.weight(1f)) {
-                VideoPlayerScreen(viewModel = viewModel)
+                VideoPlayerScreen(
+                    viewModel = viewModel,
+                    aspectRatioMode = aspectRatioMode
+                )
             }
         }
     }
