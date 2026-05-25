@@ -83,7 +83,13 @@ private const val CONTROLS_HIDE_TIMEOUT_MS = 3000L
 @Composable
 fun VideoPlayerScreen(
     viewModel: PlayerViewModel = viewModel(),
-    aspectRatioMode: AspectRatioMode = AspectRatioMode.FillBounds,
+    aspectRatioMode: AspectRatioMode = AspectRatioMode.RATIO_16_9,
+    /**
+     * Pausa o player ao sair de composição. `true` na tela única (sair = pausar).
+     * No feed deve ser `false`: ao trocar de card ativo, o ViewModel já reproduz o novo
+     * item — pausar no onDispose do card antigo cancelaria esse autoplay.
+     */
+    pauseOnDispose: Boolean = true,
     controlsContent: (@Composable (PlayerUiState, Player, (PlayerIntent) -> Unit) -> Unit)? = null
 ) {
     val uiState = viewModel.uiState.collectAsState()
@@ -222,9 +228,9 @@ fun VideoPlayerScreen(
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(pauseOnDispose) {
         onDispose {
-            player.pause()
+            if (pauseOnDispose) player.pause()
         }
     }
 }

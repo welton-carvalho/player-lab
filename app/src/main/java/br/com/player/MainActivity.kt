@@ -27,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -44,6 +45,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -68,6 +70,14 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
+import androidx.media3.common.util.UnstableApi
+import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.rememberNavBackStack
+import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
+import androidx.navigation3.ui.NavDisplay
+import br.com.player.feed.VideoFeedScreen
 import br.com.player.player.AspectRatioMode
 import br.com.player.player.CacheManager
 import br.com.player.player.MediaItemConfig
@@ -77,7 +87,10 @@ import br.com.player.player.ui.PlayerIntent
 import br.com.player.player.ui.PlayerViewModel
 import br.com.player.player.ui.VideoPlayerScreen
 import br.com.player.ui.theme.PlayerTheme
+import br.com.player.util.appViewModel
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import java.util.Map.entry
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,11 +98,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             PlayerTheme {
-                MainScreen()
+                AppNavigation()
             }
         }
     }
 
+    @androidx.annotation.OptIn(UnstableApi::class)
     override fun onDestroy() {
         super.onDestroy()
         if (isFinishing) {
@@ -98,9 +112,45 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// ── Navegação (Jetpack Navigation 3) ────────────────────────────────────────────
+
+@Serializable
+private data object MainRoute : NavKey
+
+@Serializable
+private data object FeedRoute : NavKey
+
+@Composable
+fun AppNavigation() {
+    val backStack = rememberNavBackStack(MainRoute)
+
+    NavDisplay(
+        backStack = backStack,
+        onBack = { backStack.removeLastOrNull() },
+        // Decorators garantem que cada NavEntry tenha seu próprio ViewModelStore →
+        // PlayerViewModel (main) e VideoFeedViewModel (feed) ficam isolados, cada um
+        // com seu ExoPlayer. O ViewModel do feed é liberado ao sair (pop).
+        entryDecorators = listOf(
+            rememberSaveableStateHolderNavEntryDecorator(),
+            rememberViewModelStoreNavEntryDecorator()
+        ),
+        entryProvider = entryProvider {
+            entry<MainRoute> {
+                MainScreen(onOpenFeed = { backStack.add(FeedRoute) })
+            }
+            entry<FeedRoute> {
+                VideoFeedScreen()
+            }
+        }
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: PlayerViewModel = viewModel()) {
+fun MainScreen(
+    onOpenFeed: () -> Unit = {},
+    viewModel: PlayerViewModel = appViewModel()
+) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val uiState by viewModel.uiState.collectAsState()
@@ -386,6 +436,25 @@ fun MainScreen(viewModel: PlayerViewModel = viewModel()) {
                                         style = MaterialTheme.typography.labelLarge
                                     )
                                 }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Navega para o feed vertical de vídeos
+                            OutlinedButton(
+                                onClick = onOpenFeed,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = MaterialTheme.shapes.medium
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.PlaylistPlay,
+                                    contentDescription = null
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "Ver lista de vídeos",
+                                    style = MaterialTheme.typography.labelLarge
+                                )
                             }
                         }
                     }

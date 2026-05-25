@@ -33,6 +33,8 @@ sealed class PlayerIntent {
     object TogglePlayPause : PlayerIntent()
     data class SeekTo(val positionMs: Long) : PlayerIntent()
     data class LoadMediaList(val config: PlayerConfig) : PlayerIntent()
+    /** Reproduz o item da playlist no índice indicado (ex.: feed dirigido por scroll). */
+    data class PlayItemAt(val index: Int) : PlayerIntent()
     object NextItem : PlayerIntent()
     object PreviousItem : PlayerIntent()
     /** Retenta o último carregamento após um erro. */
@@ -208,6 +210,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             is PlayerIntent.LoadMediaList -> {
                 lastConfig = intent.config
                 loadMediaList(intent.config)
+            }
+            is PlayerIntent.PlayItemAt -> {
+                // Reusa a mesma lógica de preload já existente: no modo prefetch troca para
+                // a fonte (idealmente já pré-carregada); no modo direto faz seek pela playlist.
+                if (prefetchEnabled) {
+                    if (intent.index != currentPlayingIndex) playItemAt(intent.index)
+                } else {
+                    _player.seekTo(intent.index, 0L)
+                }
             }
             PlayerIntent.NextItem -> {
                 if (prefetchEnabled) {
