@@ -37,7 +37,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import br.com.player.util.playerViewModel
-import br.com.player.player.AspectRatioMode
 import br.com.player.player.PlayerConfig
 import br.com.player.player.ui.PlayerIntent
 import br.com.player.player.ui.PlayerViewModel
@@ -171,9 +170,10 @@ private fun VideoFeedCard(
                 if (isActive) {
                     // Reusa a tela do player. pauseOnDispose=false: o ViewModel já reproduz o
                     // novo card ao trocar — não pausamos no onDispose deste.
+                    // O card já fixa o Box em 16:9 → não reaplicamos aspect ratio aqui.
                     VideoPlayerScreen(
                         viewModel = viewModel,
-                        aspectRatioMode = AspectRatioMode.RATIO_16_9,
+                        aspectRatioMode = null,
                         pauseOnDispose = false
                     )
                 } else {

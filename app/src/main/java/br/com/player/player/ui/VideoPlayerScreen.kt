@@ -83,7 +83,12 @@ private const val CONTROLS_HIDE_TIMEOUT_MS = 3000L
 @Composable
 fun VideoPlayerScreen(
     viewModel: PlayerViewModel = viewModel(),
-    aspectRatioMode: AspectRatioMode = AspectRatioMode.RATIO_16_9,
+    /**
+     * Modo de proporção do vídeo. `null` desliga a aplicação de aspect ratio:
+     * o player apenas preenche o container já moldado por quem o hospeda
+     * (ex.: no feed, o card já fixa o `Box` em 16:9) com `ContentScale.Fit`.
+     */
+    aspectRatioMode: AspectRatioMode? = null,
     /**
      * Pausa o player ao sair de composição. `true` na tela única (sair = pausar).
      * No feed deve ser `false`: ao trocar de card ativo, o ViewModel já reproduz o novo
@@ -143,12 +148,14 @@ fun VideoPlayerScreen(
         is AspectRatioMode.Crop       -> Modifier.fillMaxSize()
         is AspectRatioMode.Inside     -> Modifier.fillMaxSize()
         is AspectRatioMode.Fixed      -> Modifier.aspectRatio(aspectRatioMode.ratio)
+        null                          -> Modifier.fillMaxSize()
     }
     val contentScale = when (aspectRatioMode) {
         is AspectRatioMode.FillBounds -> ContentScale.FillBounds
         is AspectRatioMode.Crop       -> ContentScale.Crop
         is AspectRatioMode.Inside     -> ContentScale.Inside
         is AspectRatioMode.Fixed      -> ContentScale.Fit
+        null                          -> ContentScale.Fit
     }
 
     Box(
