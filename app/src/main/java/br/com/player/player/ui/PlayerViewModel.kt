@@ -1,22 +1,13 @@
 package br.com.player.player.ui
 
-import android.app.Application
-import androidx.annotation.OptIn
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
-import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl
-import br.com.player.player.BufferConfig
 import br.com.player.player.CacheConfig
 import br.com.player.player.MediaItemConfig
-import br.com.player.player.MediaSourceBuilder
 import br.com.player.player.PlayerConfig
-import br.com.player.player.toMediaItem
+import br.com.player.player.engine.PlayerEngine
+import br.com.player.player.engine.PlayerEventListener
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,20 +15,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
-/**
- * MVI contract
- */
+// ── MVI contract ─────────────────────────────────────────────────────────────
+
 sealed class PlayerIntent {
     object TogglePlayPause : PlayerIntent()
     data class SeekTo(val positionMs: Long) : PlayerIntent()
     data class LoadMediaList(val config: PlayerConfig) : PlayerIntent()
-    /** Reproduz o item da playlist no índice indicado (ex.: feed dirigido por scroll). */
     data class PlayItemAt(val index: Int) : PlayerIntent()
     object NextItem : PlayerIntent()
     object PreviousItem : PlayerIntent()
-    /** Retenta o último carregamento após um erro. */
     object RetryLast : PlayerIntent()
 }
 
@@ -57,23 +44,15 @@ sealed class PlayerEffect {
 }
 
 /**
- * ViewModel que gerencia o ExoPlayer com estratégia automática de playback:
+ * ViewModel MVI que gerencia a lógica de playback delegando operações de mídia
+ * ao [PlayerEngine].
  *
- * - **1 item** → ExoPlayer direto: `addMediaSource()` + `prepare()`.
- *   Sem overhead do PreloadManager.
- *
- * - **2+ itens** → `DefaultPreloadManager`: pré-carrega itens vizinhos em background,
- *   eliminando rebuffer ao navegar pela playlist.
- *   Estratégia de preload por distância:
- *     · ±1 → 3 segundos de conteúdo
- *     · ±2 → seleciona trilhas
- *     · ±3-4 → prepara manifest
- *     · >4 → não pré-carrega
+ * Não depende de nenhum tipo Android ou Media3 diretamente — apenas de
+ * [PlayerEngine] e [PlayerEventListener] — o que permite testes JVM puros.
  */
-@OptIn(UnstableApi::class)
-class PlayerViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val app = application
+class PlayerViewModel(
+    private val engine: PlayerEngine
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
@@ -81,114 +60,48 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _effects = MutableSharedFlow<PlayerEffect>()
     val effects = _effects.asSharedFlow()
 
-    // ── Estado interno da playlist ────────────────────────────────────────────
     private var currentPlayingIndex: Int = 0
     private var loadedMediaConfigs: List<MediaItemConfig> = emptyList()
     private var lastConfig: PlayerConfig? = null
-
-    /**
-     * true  → modo PreloadManager (lista com 2+ itens)
-     * false → modo direto (item único)
-     * Definido automaticamente em loadMediaList baseado em mediaList.size.
-     */
     private var prefetchEnabled: Boolean = false
 
-    // ── DefaultPreloadManager ─────────────────────────────────────────────────
-
-    private inner class PlaylistPreloadStatusControl :
-        TargetPreloadStatusControl<Int, DefaultPreloadManager.PreloadStatus> {
-
-        override fun getTargetPreloadStatus(rankingData: Int): DefaultPreloadManager.PreloadStatus {
-            val distance = abs(rankingData - currentPlayingIndex)
-            return when (distance) {
-                1    -> DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(3_000L)
-                2    -> DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_TRACKS_SELECTED
-                3, 4 -> DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_SOURCE_PREPARED
-                else -> DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_NOT_PRELOADED
+    init {
+        engine.setEventListener(object : PlayerEventListener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                _uiState.value = _uiState.value.copy(isPlaying = isPlaying)
             }
-        }
-    }
 
-    private val preloadStatusControl = PlaylistPreloadStatusControl()
-
-    /**
-     * Builder compartilhado — OBRIGATÓRIO que ExoPlayer e DefaultPreloadManager
-     * sejam criados pelo mesmo builder (compartilham LoadControl, BandwidthMeter,
-     * TrackSelector e RenderersFactory).
-     */
-    private val preloadBuilder: DefaultPreloadManager.Builder by lazy {
-        DefaultPreloadManager.Builder(app, preloadStatusControl).apply {
-            val bufCfg = lastConfig?.bufferConfig ?: BufferConfig()
-            setLoadControl(
-                DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(
-                        bufCfg.minBufferMs,
-                        bufCfg.maxBufferMs,
-                        bufCfg.bufferForPlaybackMs,
-                        bufCfg.bufferForPlaybackAfterRebufferMs
-                    ).build()
-            )
-        }
-    }
-
-    private val preloadManager: DefaultPreloadManager by lazy { preloadBuilder.build() }
-    private val _player: ExoPlayer by lazy { preloadBuilder.buildExoPlayer() }
-
-    // ── Listener do player ───────────────────────────────────────────────────
-
-    private val playerListener = object : Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            _uiState.value = _uiState.value.copy(isPlaying = isPlaying)
-        }
-
-        override fun onPlaybackStateChanged(state: Int) {
-            _uiState.value = _uiState.value.copy(
-                isBuffering = state == Player.STATE_BUFFERING
-            )
-            if (state == Player.STATE_ENDED) {
-                viewModelScope.launch {
-                    _effects.emit(PlayerEffect.OnPlaylistEnded)
+            override fun onPlaybackStateChanged(isBuffering: Boolean, isEnded: Boolean) {
+                _uiState.value = _uiState.value.copy(isBuffering = isBuffering)
+                if (isEnded) {
+                    viewModelScope.launch { _effects.emit(PlayerEffect.OnPlaylistEnded) }
                 }
             }
-        }
 
-        override fun onPositionDiscontinuity(
-            oldPosition: Player.PositionInfo,
-            newPosition: Player.PositionInfo,
-            reason: Int
-        ) {
-            _uiState.value = _uiState.value.copy(
-                currentPositionMs = newPosition.positionMs,
-                durationMs = _player.duration.takeIf { it != Long.MIN_VALUE } ?: 0L
-            )
-        }
-
-        /**
-         * No modo direto (1 item ou seekToNext/Previous), o ExoPlayer gerencia
-         * a transição internamente. Sincroniza o índice da UI com o estado real do player.
-         */
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            if (!prefetchEnabled) {
-                val newIndex = _player.currentMediaItemIndex
-                currentPlayingIndex = newIndex
-                _uiState.value = _uiState.value.copy(currentIndex = newIndex)
+            override fun onPositionChanged(positionMs: Long, durationMs: Long) {
+                _uiState.value = _uiState.value.copy(
+                    currentPositionMs = positionMs,
+                    durationMs = durationMs
+                )
             }
-        }
-    }
 
-    init {
-        _player.addListener(playerListener)
+            override fun onMediaItemIndexChanged(index: Int) {
+                if (!prefetchEnabled) {
+                    currentPlayingIndex = index
+                    _uiState.value = _uiState.value.copy(currentIndex = index)
+                }
+            }
+        })
         startPositionUpdates()
     }
 
-    /** Polling de posição a cada 500ms enquanto o player está reproduzindo. */
     private fun startPositionUpdates() {
         viewModelScope.launch {
             while (true) {
-                if (_player.isPlaying) {
+                if (engine.isPlaying) {
                     _uiState.value = _uiState.value.copy(
-                        currentPositionMs = _player.currentPosition,
-                        durationMs = _player.duration.coerceAtLeast(0L)
+                        currentPositionMs = engine.currentPosition,
+                        durationMs = engine.duration.coerceAtLeast(0L)
                     )
                 }
                 delay(500L)
@@ -196,28 +109,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun getPlayer(): ExoPlayer = _player
+    /** Expõe o player Media3 para uso exclusivo pelo ContentFrame da UI. */
+    fun getPlayer(): Player = engine.player
 
-    @OptIn(UnstableApi::class)
     fun handleIntent(intent: PlayerIntent) {
         when (intent) {
             is PlayerIntent.TogglePlayPause -> {
-                if (_player.isPlaying) _player.pause() else _player.play()
+                if (engine.isPlaying) engine.pause() else engine.play()
             }
-            is PlayerIntent.SeekTo -> {
-                _player.seekTo(intent.positionMs)
-            }
+            is PlayerIntent.SeekTo -> engine.seekTo(intent.positionMs)
             is PlayerIntent.LoadMediaList -> {
                 lastConfig = intent.config
                 loadMediaList(intent.config)
             }
             is PlayerIntent.PlayItemAt -> {
-                // Reusa a mesma lógica de preload já existente: no modo prefetch troca para
-                // a fonte (idealmente já pré-carregada); no modo direto faz seek pela playlist.
                 if (prefetchEnabled) {
                     if (intent.index != currentPlayingIndex) playItemAt(intent.index)
                 } else {
-                    _player.seekTo(intent.index, 0L)
+                    engine.seekToItem(intent.index, 0L)
                 }
             }
             PlayerIntent.NextItem -> {
@@ -225,7 +134,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     if (currentPlayingIndex < loadedMediaConfigs.size - 1)
                         playItemAt(currentPlayingIndex + 1)
                 } else {
-                    _player.seekToNext()
+                    engine.seekToNext()
                 }
             }
             PlayerIntent.PreviousItem -> {
@@ -233,33 +142,33 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     if (currentPlayingIndex > 0)
                         playItemAt(currentPlayingIndex - 1)
                 } else {
-                    _player.seekToPrevious()
+                    engine.seekToPrevious()
                 }
             }
-            PlayerIntent.RetryLast -> {
-                lastConfig?.let { loadMediaList(it) }
-            }
+            PlayerIntent.RetryLast -> lastConfig?.let { loadMediaList(it) }
         }
     }
 
-    @UnstableApi
     private fun loadMediaList(config: PlayerConfig) {
         viewModelScope.launch {
             try {
                 _uiState.value = _uiState.value.copy(errorMessage = null)
-
-                // Estratégia automática: 2+ itens = prefetch, 1 item = direto
                 prefetchEnabled = config.mediaList.size > 1
                 loadedMediaConfigs = config.mediaList
 
                 if (prefetchEnabled) {
-                    loadWithPreload(config)
+                    engine.registerForPreload(config.mediaList)
+                    playItemAt(0)
                 } else {
-                    loadDirect(config)
+                    engine.loadDirect(config.mediaList, config.cacheConfig)
+                    _uiState.value = _uiState.value.copy(
+                        currentIndex = 0,
+                        currentPositionMs = 0L,
+                        durationMs = 0L
+                    )
                 }
 
                 _uiState.value = _uiState.value.copy(totalItems = config.mediaList.size)
-
             } catch (t: Throwable) {
                 _uiState.value = _uiState.value.copy(errorMessage = t.message)
                 _effects.emit(PlayerEffect.ShowErrorToast(t.message ?: "Erro desconhecido"))
@@ -267,82 +176,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /**
-     * Estratégia PreloadManager — usada quando mediaList.size > 1.
-     * Registra todos os itens no manager, aciona o pré-carregamento e reproduz o primeiro.
-     */
-    @UnstableApi
-    private fun loadWithPreload(config: PlayerConfig) {
-        _player.stop()
-        _player.clearMediaItems()
-        preloadManager.reset()
-        currentPlayingIndex = 0
-
-        config.mediaList.forEachIndexed { index, item ->
-            preloadManager.add(item.toMediaItem(), index)
-        }
-        preloadManager.invalidate()
-        playItemAt(0)
-    }
-
-    /**
-     * Estratégia direta — usada quando mediaList.size == 1.
-     * Carrega o MediaSource diretamente no ExoPlayer sem overhead do PreloadManager.
-     */
-    @UnstableApi
-    private fun loadDirect(config: PlayerConfig) {
-        _player.stop()
-        _player.clearMediaItems()
-        preloadManager.reset() // limpa estado anterior se havia uma playlist
-        currentPlayingIndex = 0
-
-        config.mediaList.forEach { item ->
-            val source = MediaSourceBuilder.build(app, item, config.cacheConfig)
-            _player.addMediaSource(source)
-        }
-        _player.playWhenReady = true
-        _player.prepare()
-
-        _uiState.value = _uiState.value.copy(
-            currentIndex = 0,
-            currentPositionMs = 0L,
-            durationMs = 0L
-        )
-    }
-
-    /**
-     * Reproduz o item no índice indicado via PreloadManager.
-     * Tenta obter o MediaSource pré-carregado; usa fallback direto se ainda não estiver pronto.
-     */
-    @UnstableApi
     private fun playItemAt(index: Int) {
         if (index < 0 || index >= loadedMediaConfigs.size) return
-
         currentPlayingIndex = index
         val config = loadedMediaConfigs[index]
-        val mediaItem = config.toMediaItem()
-
-        val preloadedSource = preloadManager.getMediaSource(mediaItem)
-
-        if (preloadedSource != null) {
-            _player.setMediaSource(preloadedSource)
-        } else {
-            // Fallback: pré-carregamento ainda não concluído, carrega diretamente
-            val directSource = MediaSourceBuilder.build(
-                app,
-                config,
-                lastConfig?.cacheConfig ?: CacheConfig()
-            )
-            _player.setMediaSource(directSource)
-        }
-
-        _player.playWhenReady = true
-        _player.prepare()
-
-        // Reprioriza os vizinhos para pré-carregamento
-        preloadManager.setCurrentPlayingIndex(index)
-        preloadManager.invalidate()
-
+        engine.playPreloadedItemAt(index, config, lastConfig?.cacheConfig ?: CacheConfig())
+        engine.setCurrentPreloadIndex(index)
+        engine.invalidatePreload()
         _uiState.value = _uiState.value.copy(
             currentIndex = index,
             currentPositionMs = 0L,
@@ -350,13 +190,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    /** Exposto como `internal` para permitir limpeza controlada em testes. */
+    internal fun closeForTest() = onCleared()
+
     override fun onCleared() {
         super.onCleared()
-        try {
-            _player.removeListener(playerListener)
-            preloadManager.release() // liberar PreloadManager ANTES do player
-            _player.release()
-        } catch (_: Exception) {
-        }
+        engine.clearEventListener()
+        engine.release()
     }
 }

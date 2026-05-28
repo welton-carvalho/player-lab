@@ -69,7 +69,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation3.runtime.NavKey
@@ -87,7 +86,7 @@ import br.com.player.player.ui.PlayerIntent
 import br.com.player.player.ui.PlayerViewModel
 import br.com.player.player.ui.VideoPlayerScreen
 import br.com.player.ui.theme.PlayerTheme
-import br.com.player.util.appViewModel
+import br.com.player.util.playerViewModel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import java.util.Map.entry
@@ -149,7 +148,7 @@ fun AppNavigation() {
 @Composable
 fun MainScreen(
     onOpenFeed: () -> Unit = {},
-    viewModel: PlayerViewModel = appViewModel()
+    viewModel: PlayerViewModel = playerViewModel()
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE

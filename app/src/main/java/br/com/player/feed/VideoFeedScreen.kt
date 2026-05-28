@@ -36,7 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import br.com.player.util.appViewModel
+import br.com.player.util.playerViewModel
 import br.com.player.player.AspectRatioMode
 import br.com.player.player.PlayerConfig
 import br.com.player.player.ui.PlayerIntent
@@ -58,7 +58,7 @@ import androidx.compose.runtime.snapshotFlow
  */
 @Composable
 fun VideoFeedScreen(
-    viewModel: PlayerViewModel = appViewModel()
+    viewModel: PlayerViewModel = playerViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()

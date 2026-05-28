@@ -10,6 +10,8 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import br.com.player.player.ui.PlayerViewModel
+import br.com.player.player.ui.PlayerViewModelFactory
 
 /**
  * Obtém um [ViewModel] garantindo o `APPLICATION_KEY` nas [CreationExtras].
@@ -29,4 +31,21 @@ inline fun <reified VM : ViewModel> appViewModel(): VM {
         set(ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY, app)
     }
     return viewModel(extras = extras)
+}
+
+/**
+ * Cria ou recupera um [PlayerViewModel] escopado ao [LocalViewModelStoreOwner] atual,
+ * injetando [PlayerViewModelFactory] com a [Application] correta.
+ *
+ * Use em vez de [appViewModel] para o PlayerViewModel, pois ele não é mais
+ * um AndroidViewModel e precisa de sua própria factory.
+ */
+@Composable
+fun playerViewModel(): PlayerViewModel {
+    val app = LocalContext.current.applicationContext as Application
+    val owner = LocalViewModelStoreOwner.current
+    val base = (owner as? HasDefaultViewModelProviderFactory)
+        ?.defaultViewModelCreationExtras ?: CreationExtras.Empty
+    val extras = MutableCreationExtras(base)
+    return viewModel(factory = PlayerViewModelFactory(app), extras = extras)
 }
