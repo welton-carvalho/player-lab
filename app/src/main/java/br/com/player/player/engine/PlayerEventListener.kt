@@ -9,4 +9,5 @@ interface PlayerEventListener {
     fun onPlaybackStateChanged(isBuffering: Boolean, isEnded: Boolean) = Unit
     fun onPositionChanged(positionMs: Long, durationMs: Long) = Unit
     fun onMediaItemIndexChanged(index: Int) = Unit
+    fun onPreloadCompleted(index: Int) = Unit
 }

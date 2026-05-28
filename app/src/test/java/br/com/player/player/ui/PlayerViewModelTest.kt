@@ -12,7 +12,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -271,6 +270,49 @@ class PlayerViewModelTest {
         fakeEngine.simulateMediaItemIndexChanged(0)
 
         assertEquals(0, viewModel.uiState.value.currentIndex)
+    }
+
+    // ── Preload state ────────────────────────────────────────────────────────
+
+    @Test
+    fun `LoadMediaList com multiplos itens define isPrefetchEnabled true`() = runTest {
+        viewModel.handleIntent(PlayerIntent.LoadMediaList(PlayerConfig(mediaList = multiItems)))
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.isPrefetchEnabled)
+    }
+
+    @Test
+    fun `LoadMediaList com 1 item define isPrefetchEnabled false`() = runTest {
+        viewModel.handleIntent(PlayerIntent.LoadMediaList(PlayerConfig(mediaList = listOf(singleItem))))
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.isPrefetchEnabled)
+    }
+
+    @Test
+    fun `onPreloadCompleted adiciona indice a preloadedIndices`() = runTest {
+        viewModel.handleIntent(PlayerIntent.LoadMediaList(PlayerConfig(mediaList = multiItems)))
+        advanceUntilIdle()
+
+        fakeEngine.simulatePreloadCompleted(1)
+
+        assertTrue(1 in viewModel.uiState.value.preloadedIndices)
+        assertFalse(0 in viewModel.uiState.value.preloadedIndices)
+    }
+
+    @Test
+    fun `LoadMediaList nova lista limpa preloadedIndices anteriores`() = runTest {
+        viewModel.handleIntent(PlayerIntent.LoadMediaList(PlayerConfig(mediaList = multiItems)))
+        advanceUntilIdle()
+        fakeEngine.simulatePreloadCompleted(1)
+        fakeEngine.simulatePreloadCompleted(2)
+        assertEquals(2, viewModel.uiState.value.preloadedIndices.size)
+
+        viewModel.handleIntent(PlayerIntent.LoadMediaList(PlayerConfig(mediaList = multiItems)))
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.preloadedIndices.isEmpty())
     }
 
     // ── onCleared ────────────────────────────────────────────────────────────

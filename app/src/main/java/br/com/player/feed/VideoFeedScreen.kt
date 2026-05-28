@@ -7,9 +7,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -98,9 +98,10 @@ fun VideoFeedScreen(
         ) {
             items(feedItems, key = { it.position }) { item ->
                 val index = item.position - 1
+                val isActive = index == uiState.currentIndex
                 VideoFeedCard(
                     position = item.position,
-                    isActive = index == uiState.currentIndex,
+                    isActive = isActive,
                     viewModel = viewModel
                 )
             }
@@ -131,7 +132,7 @@ private fun LaunchedMostVisible(
             .map { it ?: 0 }
             .distinctUntilChanged()
             .collectLatest { index ->
-                delay(200L)
+                delay(250L)
                 onMostVisible(index)
             }
     }
@@ -162,22 +163,17 @@ private fun VideoFeedCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
+                    .height(220.dp)
                     .clip(MaterialTheme.shapes.large)
                     .background(Color.Black),
                 contentAlignment = Alignment.Center
             ) {
                 if (isActive) {
-                    // Reusa a tela do player. pauseOnDispose=false: o ViewModel já reproduz o
-                    // novo card ao trocar — não pausamos no onDispose deste.
-                    // O card já fixa o Box em 16:9 → não reaplicamos aspect ratio aqui.
                     VideoPlayerScreen(
                         viewModel = viewModel,
-                        aspectRatioMode = null,
                         pauseOnDispose = false
                     )
                 } else {
-                    // Poster do card inativo: sem player → sem decoder extra.
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
                         contentDescription = null,

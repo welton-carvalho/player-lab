@@ -1,20 +1,19 @@
 # 📱 Player de Vídeo Android — Guia Completo para Devs Júniors
 
 > **Para quem é este guia?**
-> Este documento foi escrito pensando em você que está aprendendo Android e quer entender como funciona um player de vídeo de verdade. Não assumimos que você já sabe tudo — cada conceito novo vem acompanhado de uma explicação em português simples.
+> Este documento foi escrito pensando em você que está aprendendo Android e quer entender como funciona um player de vídeo de verdade — com cache, preload, feed vertical, Reels, controle adaptativo por rede e por capacidade do device. Não assumimos que você já sabe tudo: cada conceito novo vem com uma explicação em português simples e, sempre que houver uma decisão de projeto, a gente explica **por que** foi feita daquele jeito.
 
 ---
 
 ## 📌 O que este projeto faz?
 
-Este é um **app Android de reprodução de vídeo** (como um YouTube simplificado). Com ele você pode:
+É um **app Android de reprodução de vídeo** organizado em três telas, todas reusando o mesmo "motor de player":
 
-- Colar uma URL de vídeo e apertar "Reproduzir"
-- Assistir vídeos em HLS ou DASH (formatos profissionais de streaming)
-- Navegar entre uma lista de vídeos (playlist)
-- Girar o celular e ter tela cheia automática
-- Ver o progresso do carregamento e controles de play/pause/avançar
-- Escolher o **aspect ratio** (proporção) de exibição do vídeo em tempo real
+1. **MainScreen** — formulário para colar uma URL (HLS/DASH), opção de cortar a duração, e o player com controles.
+2. **Feed (cards)** — `LazyColumn` vertical com 30 cards de vídeo. O card mais visível dispara o autoplay; vizinhos são pré-carregados.
+3. **Reels** — feed full-screen com swipe vertical (`VerticalPager`), portrait travado, imersivo, toque pausa/retoma. Estilo TikTok/Instagram Reels.
+
+Sob o capô há um **sistema adaptativo** que olha para a rede (Wi-Fi/4G/3G/offline), para a RAM do device (LOW/MID/HIGH) e para o bandwidth medido em tempo real, ajustando preload e buffer dinamicamente.
 
 ---
 
@@ -22,77 +21,61 @@ Este é um **app Android de reprodução de vídeo** (como um YouTube simplifica
 
 | Tecnologia | O que faz neste projeto |
 |---|---|
-| **Kotlin** | Linguagem de programação principal |
-| **Jetpack Compose** | Cria a interface visual (telas e botões) sem XML |
-| **Media3 / ExoPlayer** | Motor que realmente toca o vídeo |
-| **Arquitetura MVI** | Padrão de organização do código que facilita debug e testes |
-| **Material Design 3** | Sistema de design do Google (cores, tipografia, formas) |
-| **OkHttp** | Biblioteca para fazer requisições HTTP com mais controle |
-| **SimpleCache** | Salva partes do vídeo no celular para evitar re-baixar |
-| **JUnit 4 + kotlinx-coroutines-test** | Testes unitários JVM do `PlayerViewModel` (sem emulador) |
+| **Kotlin** | Linguagem principal. |
+| **Jetpack Compose** | Cria a interface visual (telas, listas, pager) sem XML. |
+| **Media3 / ExoPlayer 1.10.1** | Motor de playback. Inclui `DefaultPreloadManager` para preload. |
+| **Jetpack Navigation 3** | Navegação entre as três telas, com `ViewModelStore` por destino. |
+| **Arquitetura MVI** | `Intent` → `ViewModel` → `State`/`Effect` → `View`. |
+| **Material Design 3 Expressive** | Sistema de design (cores, tipografia, formas) e controles (`ProgressSlider`, `PlayPauseButton`, etc.) do Media3-compose-material3. |
+| **OkHttp** | HTTP customizado com User-Agent (necessário para muitos CDNs). |
+| **SimpleCache (LRU 200 MB)** | Cache de disco compartilhado entre playback **e** preload. |
+| **JUnit 4 + kotlinx-coroutines-test** | Testes unitários JVM do `PlayerViewModel` (sem emulador). |
 
 ---
 
 ## ✅ Pré-requisitos
 
-Antes de rodar o projeto, você precisa ter instalado:
+- **Android Studio** Ladybug 2024.2 ou mais recente — [developer.android.com/studio](https://developer.android.com/studio).
+- **JDK 11+** (o Android Studio já vem com um JDK).
+- **Android SDK 26+** (Android 8.0+).
+- Conhecimento básico de Kotlin e Jetpack Compose.
 
-- **Android Studio** (versão Ladybug 2024.2 ou mais recente — baixe em [developer.android.com/studio](https://developer.android.com/studio))
-- **JDK 11** ou superior (o Android Studio já instala o JDK por padrão)
-- **Android SDK 26** ou superior (Android 8.0+)
-- Conhecimento básico de **Kotlin** e **Jetpack Compose**
-
-> 💡 **Dica:** Se você nunca usou Compose antes, não entre em pânico! O Compose é como HTML, mas em Kotlin. Em vez de `<Button>`, você escreve `Button { Text("Clique aqui") }`.
+> 💡 **Nunca usou Compose?** Pense em Compose como HTML, mas em Kotlin: em vez de `<Button>`, você escreve `Button { Text("Clique") }`. O Compose **recompõe** (redesenha) sozinho quando o estado muda.
 
 ---
 
 ## 🚀 Como Rodar o Projeto
 
-1. **Abra o Android Studio**
-
-2. **Abra o projeto:** Clique em `File > Open` e selecione a pasta `Player`
-
-3. **Aguarde o sync do Gradle:** Uma barra de progresso vai aparecer no rodapé do Android Studio. Espere terminar (pode demorar alguns minutos na primeira vez — ele está baixando as dependências).
-
-4. **Crie um emulador** (se não tiver um dispositivo físico):
-   - Clique em `Device Manager` na barra lateral direita
-   - Clique em `Create Device`
-   - Escolha `Pixel 6` e Android API 33 ou superior
-
-5. **Execute o app:** Clique no botão ▶️ verde no topo ou pressione `Shift + F10`
-
-6. **Teste o app:**
-   - Uma URL de teste já vem preenchida por padrão
-   - Clique em **"Carregar e Reproduzir"**
-   - O vídeo deve começar a tocar!
+1. **Abra o projeto** no Android Studio (`File > Open`, selecione a pasta `Player`).
+2. **Aguarde o sync do Gradle** — pode demorar na primeira vez (baixa dependências).
+3. **Crie um emulador** (Pixel 6, API 33+) ou conecte um dispositivo físico.
+4. **Execute** com ▶️ (`Shift + F10`).
+5. Na tela principal, a URL de teste (`https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`) já vem preenchida. Aperte **Carregar e Reproduzir** ou navegue para **Ver lista de vídeos** / **Ver Reels**.
 
 ---
 
-## 🎬 O que Você Vê na Tela
+## 🎬 As Três Telas
 
 ```
-┌─────────────────────────────────────┐
-│  ▶️  Player                         │  ← Barra do topo (some no landscape)
-├─────────────────────────────────────┤
-│                                     │
-│  🔗 URL do Vídeo (HLS/DASH)   [X]  │  ← Campo de URL
-│                                     │
-│  Aplicar corte de duração    [OFF]  │  ← Switch opcional
-│                                     │
-│  Proporção (Aspect Ratio)      ▾   │  ← Dropdown (FillBounds / Crop /
-│  Como o vídeo preenche o player     │    Inside / 16:9 / 4:3 / 1:1 / 9:16)
-│                                     │
-│  [▶️ Carregar e Reproduzir]         │  ← Botão principal
-│                                     │
-├─────────────────────────────────────┤
-│                                     │
-│         ÁREA DO PLAYER              │  ← Vídeo ocupa aqui
-│                                     │
-│  ▶️  ◀️  ▶▶  ━━━━●━━━  01:30/05:00 │  ← Controles (somem em 3s)
-└─────────────────────────────────────┘
+┌────────────────┐   ┌────────────────┐   ┌────────────────┐
+│  Player        │   │  Lista...      │   │   (sem chrome) │
+│                │   │┌──────────────┐│   │                │
+│  🔗 URL [    ] │   ││ Vídeo #1     ││   │     ▓▓▓▓▓▓     │
+│  ☐ Cortar      │   ││  ▓▓▓▓▓▓▓▓▓▓  ││   │     ▓▓▓▓▓▓     │ ← VerticalPager
+│  [▶ Reproduzir]│   │└──────────────┘│   │     ▓▓▓▓▓▓     │   (1 página por swipe)
+│  [Lista ↓]     │   │┌──────────────┐│   │     ▓▓▓▓▓▓     │
+│  [Reels ↓]     │   ││ Vídeo #2     ││   │                │
+│ ───────────────│   ││  ▓▓▓▓▓▓▓▓▓▓  ││   │                │
+│                │   │└──────────────┘│   │                │
+│   ÁREA PLAYER  │   │ ...            │   │  (toque = ⏯)   │
+│  ▶ ◀ ▶▶  01:30 │   │                │   │                │
+└────────────────┘   └────────────────┘   └────────────────┘
+   MainScreen          VideoFeedScreen        ReelsScreen
 ```
 
-No modo **paisagem** (deitado), o formulário some e o vídeo fica em tela cheia com as barras do sistema escondidas.
+- **MainScreen** (landscape vira tela cheia imersiva).
+- **VideoFeedScreen** (`LazyColumn` — rolagem livre; autoplay do card mais visível com debounce de 250 ms).
+- **ReelsScreen** (`VerticalPager` com snap — uma página por swipe; portrait travado escopado à tela; sai do escopo → libera rotação).
 
 ---
 
@@ -100,520 +83,279 @@ No modo **paisagem** (deitado), o formulário some e o vídeo fica em tela cheia
 
 ```
 Player/
-├── app/
-│   └── src/main/
-│       ├── java/br/com/player/
-│       │   │
-│       │   ├── MainActivity.kt          ← Ponto de entrada do app.
-│       │   │                              Mostra a tela principal e gerencia o ciclo de vida.
-│       │   │
-│       │   ├── player/
-│       │   │   ├── PlayerConfig.kt      ← "Fichas técnicas" do player.
-│       │   │   │                          Define o formato dos dados (URL, cache, buffer).
-│       │   │   │
-│       │   │   ├── CacheManager.kt      ← Gerenciador de cache de vídeo.
-│       │   │   │                          Salva dados localmente para evitar re-download.
-│       │   │   │
-│       │   │   ├── MediaSourceBuilder.kt ← Fábrica de fontes de mídia.
-│       │   │   │                           Converte URL + configurações em algo que o
-│       │   │   │                           ExoPlayer consegue reproduzir.
-│       │   │   │
-│       │   │   ├── engine/
-│       │   │   │   ├── PlayerEngine.kt        ← Interface que abstrai ExoPlayer + Preload.
-│       │   │   │   │                            O ViewModel só conhece esse contrato.
-│       │   │   │   ├── PlayerEventListener.kt ← Eventos do player sem tipos Android/Media3
-│       │   │   │   │                            (permite fakes em testes JVM puros).
-│       │   │   │   └── ExoPlayerEngine.kt     ← Implementação real com Media3/ExoPlayer.
-│       │   │   │
-│       │   │   └── ui/
-│       │   │       ├── PlayerViewModel.kt        ← O "cérebro" do player.
-│       │   │       │                               Lógica de play/pause/erro; delega mídia
-│       │   │       │                               ao PlayerEngine (testável sem Android).
-│       │   │       ├── PlayerViewModelFactory.kt ← Cria o ViewModel injetando o
-│       │   │       │                               ExoPlayerEngine real.
-│       │   │       └── VideoPlayerScreen.kt      ← A tela visual do player.
-│       │   │                                       Botões, barra de progresso, controles.
-│       │   │
-│       │   ├── feed/
-│       │   │   ├── VideoFeedScreen.kt   ← Feed vertical de cards que reusa o player.
-│       │   │   └── VideoFeedMock.kt     ← Lista mock de vídeos do feed.
-│       │   │
-│       │   ├── util/
-│       │   │   └── ViewModelExt.kt      ← Helpers de Compose: playerViewModel() e
-│       │   │                              appViewModel() (injeção de Application).
-│       │   │
-│       │   └── ui/theme/
-│       │       ├── Color.kt             ← Paleta de cores do app (tema "Cinema")
-│       │       ├── Type.kt              ← Tamanhos e estilos de texto
-│       │       └── Theme.kt             ← Combina cores + tipografia em um tema Material 3
-│       │
-│       ├── res/                         ← Recursos do Android (ícones, strings)
-│       └── AndroidManifest.xml          ← "Certidão de nascimento" do app para o Android
+├── app/src/main/java/br/com/player/
+│   │
+│   ├── MainActivity.kt                ← Entry point + Navigation 3 (3 telas).
+│   │                                    Libera o cache do app no onDestroy.
+│   │
+│   ├── player/
+│   │   ├── PlayerConfig.kt            ← Data classes: MediaItemConfig, CacheConfig,
+│   │   │                                BufferConfig, PlayerConfig (+ forcePlaylistMode).
+│   │   ├── CacheManager.kt            ← Singleton: SimpleCache (LRU 200 MB) + OkHttp
+│   │   │                                singleton + CacheDataSource.Factory.
+│   │   ├── MediaSourceBuilder.kt      ← Cria MediaSource a partir de MediaItemConfig
+│   │   │                                usando o factory cache-backed.
+│   │   │
+│   │   ├── NetworkQualityProvider.kt  ← Classifica conexão: WIFI / CELLULAR_FAST /
+│   │   │                                CELLULAR_SLOW / OFFLINE (via ConnectivityManager).
+│   │   ├── DeviceCapabilityTier.kt    ← Avalia RAM (LOW/MID/HIGH) → cap de preload distance.
+│   │   ├── BandwidthAdvisor.kt        ← Lê DefaultBandwidthMeter e baixa o BufferConfig
+│   │   │                                em redes lentas (usa base como teto, nunca aumenta).
+│   │   ├── AdaptivePreloadStatusControl.kt
+│   │   │                              ← TargetPreloadStatusControl que aplica a PreloadPolicy
+│   │   │                                escolhida pela network tier + cap por capability tier.
+│   │   │
+│   │   ├── engine/
+│   │   │   ├── PlayerEngine.kt        ← Interface que abstrai ExoPlayer + Preload.
+│   │   │   ├── PlayerEventListener.kt ← Callbacks neutros (sem Android/Media3) para o ViewModel.
+│   │   │   └── ExoPlayerEngine.kt     ← Implementação real: cria ExoPlayer, PreloadManager,
+│   │   │                                injeta cache no factory, configura playlist-internal preload.
+│   │   │
+│   │   └── ui/
+│   │       ├── PlayerViewModel.kt        ← MVI: handleIntent + uiState + effects.
+│   │       │                               Decide entre prefetch (registerForPreload + playPreloadedItemAt)
+│   │       │                               e playlist (loadDirect + seekToItem).
+│   │       ├── PlayerViewModelFactory.kt ← Cria o VM injetando ExoPlayerEngine real.
+│   │       └── VideoPlayerScreen.kt      ← UI do player (ContentFrame + controles M3 Expressive
+│   │                                       com auto-hide, modo paisagem imersivo, erro com retry).
+│   │
+│   ├── feed/
+│   │   ├── VideoFeedScreen.kt         ← LazyColumn + autoplay do card mais visível.
+│   │   └── VideoFeedMock.kt           ← 30 itens com a mesma URL HLS (Mux test stream).
+│   │
+│   ├── reels/
+│   │   └── ReelsScreen.kt             ← VerticalPager full-screen + portrait lock + graça
+│   │                                    de 300 ms no spinner. Usa forcePlaylistMode = true.
+│   │
+│   ├── util/
+│   │   └── ViewModelExt.kt            ← appViewModel() e playerViewModel() helpers para
+│   │                                    Navigation 3 (escopo de ViewModel por NavEntry).
+│   │
+│   └── ui/theme/                      ← Cores, tipografia, tema Material 3 do app.
 │
-├── src/test/java/br/com/player/        ← Testes unitários JVM puros (sem emulador)
-│   ├── MainDispatcherRule.kt           ← Regra JUnit que troca Dispatchers.Main por um
-│   │                                     TestDispatcher (necessário para o viewModelScope).
+├── app/src/test/java/br/com/player/   ← Testes JVM puros (sem emulador):
+│   ├── MainDispatcherRule.kt
 │   └── player/
-│       ├── engine/FakePlayerEngine.kt  ← Test double do PlayerEngine (Kotlin puro).
-│       └── ui/PlayerViewModelTest.kt   ← Testes do PlayerViewModel usando o fake.
+│       ├── engine/FakePlayerEngine.kt ← Fake do PlayerEngine.
+│       └── ui/PlayerViewModelTest.kt  ← 27 testes do ViewModel.
 │
-├── gradle/
-│   └── libs.versions.toml              ← Lista centralizada de versões das bibliotecas
+├── docs/
+│   └── video-preload-cache.md         ← Spec detalhada do sistema adaptativo de preload.
 │
-├── build.gradle.kts                    ← Configuração de build do projeto raiz
-└── app/build.gradle.kts                ← Configuração de build do módulo app
-                                          (SDK mínimo, dependências, etc.)
+├── gradle/libs.versions.toml          ← Version catalog centralizado.
+└── app/build.gradle.kts               ← SDK, dependências.
 ```
 
 ---
 
-## 🏗️ Arquitetura MVI — Explicada para Júniors
+## 🏗️ Arquitetura MVI + Camada de Engine
 
 ### O que é MVI?
 
-**MVI** significa **Model-View-Intent** (Modelo-Visão-Intenção). É uma forma de organizar o código para que ele seja fácil de entender e depurar.
-
-**Analogia do restaurante:**
+**MVI** = **M**odel-**V**iew-**I**ntent. Três conceitos:
 
 ```
-👤 Cliente (Usuário)
-    ↓ faz um pedido (Intent)
-🧑‍🍳 Cozinha (ViewModel)
-    ↓ prepara e atualiza o status
-🍽️ Prato / Cardápio (State)
-    ↓ exibido para
-👁️ Garçom / Tela (View)
+👤 Usuário        ──(Intent)──►   🧠 ViewModel    ──(atualiza)──►   📦 State
+   tela                              processa                          imutável
+                                                                          │
+                                                                  (Compose redesenha)
+                                                                          ▼
+                                                                       👁 View
 ```
 
-No código:
+E um quarto: **Effect** — para eventos pontuais que **não devem se repetir** ao recompor (erros como toast, "playlist acabou"). Diferente do `State`, o `Effect` é entregue uma vez ao consumidor ativo.
 
-```
-Usuário aperta "Play"
-    ↓ envia PlayerIntent.TogglePlayPause
-PlayerViewModel recebe e processa
-    ↓ chama player.play()
-ExoPlayer muda estado → Listener notifica ViewModel
-    ↓ ViewModel atualiza PlayerUiState.isPlaying = true
-VideoPlayerScreen lê o estado
-    ↓ troca o ícone de ▶️ para ⏸️
-```
+### Por que adicionamos uma camada `PlayerEngine`?
 
-### Por que isso é bom?
-
-- **Uma única fonte da verdade:** O estado da tela vem de um único lugar (o `PlayerUiState`). Não tem variável em um lugar e estado em outro.
-- **Fácil de depurar:** Se algo está errado na tela, você vai no estado e vê o que está lá. Simples.
-- **Previsível:** A tela SEMPRE reage ao estado. Não tem lógica escondida no botão.
-
-### Diagrama do Fluxo
-
-```mermaid
-graph TD
-    subgraph "Camada de UI (o que o usuário vê)"
-        VPS[VideoPlayerScreen<br/>Tela do Player]
-        MS[MainScreen<br/>Formulário de URL]
-    end
-
-    subgraph "Camada de Lógica (o cérebro)"
-        VM[PlayerViewModel]
-        State[PlayerUiState<br/>Estado atual da UI]
-        Effects[PlayerEffect<br/>Eventos únicos como erros]
-    end
-
-    subgraph "Camada de Mídia (motor de vídeo)"
-        ENG[PlayerEngine<br/>interface — desacopla o ViewModel]
-        EP[ExoPlayerEngine + ExoPlayer<br/>Toca o vídeo de fato]
-        CM[CacheManager<br/>Salva dados localmente]
-        MSB[MediaSourceBuilder<br/>Prepara a fonte de vídeo]
-    end
-
-    VPS -- "1. Usuário aperta botão → Intent" --> VM
-    VM -- "2. Comanda via interface" --> ENG
-    ENG -- "implementado por" --> EP
-    EP -- "3. Avisa mudanças (PlayerEventListener)" --> VM
-    VM -- "4. Atualiza o estado" --> State
-    State -- "5. Tela redesenha" --> VPS
-    VM -- "6. Emite evento de erro" --> Effects
-    Effects -- "7. Mostra Snackbar" --> MS
-```
-
----
-
-## 🔍 Componentes Core — Explicados do Zero
-
-### 7.1 📄 `PlayerConfig.kt` — As Fichas Técnicas
-
-Este arquivo define **como os dados são organizados** no projeto. Pense neles como formulários com campos:
-
-```kotlin
-// Configuração de um vídeo individual
-data class MediaItemConfig(
-    val url: String,                    // Link do vídeo (obrigatório)
-    val format: MediaFormat = MediaFormat.HLS,  // Formato: HLS ou DASH (padrão: HLS)
-    val clipDurationMs: Long? = null    // Duração máxima em ms (null = sem corte)
-)
-
-// HLS e DASH são os dois formatos profissionais de streaming (veja o Glossário)
-enum class MediaFormat { HLS, DASH }
-
-// Configuração do cache (quantos dados salvar localmente)
-data class CacheConfig(
-    val maxBytes: Long = 200L * 1024L * 1024L // 200 MB por padrão
-)
-
-// Configuração de buffer (quanto do vídeo pré-carregar)
-data class BufferConfig(
-    val minBufferMs: Int = 15000,   // Mínimo 15 segundos de buffer
-    val maxBufferMs: Int = 50000,   // Máximo 50 segundos de buffer
-    val bufferForPlaybackMs: Int = 2500,          // 2.5s para iniciar playback
-    val bufferForPlaybackAfterRebufferMs: Int = 5000 // 5s após um "travamento"
-)
-
-// O pacote completo que você manda para o ViewModel carregar
-data class PlayerConfig(
-    val mediaList: List<MediaItemConfig>, // Lista de vídeos
-    val cacheConfig: CacheConfig = CacheConfig(),
-    val bufferConfig: BufferConfig = BufferConfig()
-)
-```
-
-> 💡 **Por que usar data class?** Kotlin `data class` gera automaticamente `equals()`, `hashCode()` e `copy()`. O `copy()` é muito útil no MVI: `estado.copy(isPlaying = true)` cria um novo estado sem modificar o original.
-
-#### `AspectRatioMode` — Controle de Proporção
-
-Também definida em `PlayerConfig.kt`, esta sealed class controla **como o vídeo é exibido** dentro do player. Ela atua em duas camadas complementares:
-
-| Camada | Responsável | O que faz |
-|---|---|---|
-| **Layout** | `Modifier.aspectRatio()` (Compose) | Define o tamanho/forma do container |
-| **Renderização** | `ContentScale` (Media3 nativo) | Define como o ExoPlayer renderiza o vídeo dentro do frame |
-
-```kotlin
-sealed class AspectRatioMode {
-
-    // ── Modos de escala (container fullscreen) ─────────────────────────────
-    data object FillBounds : AspectRatioMode() // Estica → pode distorcer
-    data object Crop       : AspectRatioMode() // Zoom/corte → sem distorção
-    data object Inside     : AspectRatioMode() // Fit sem ampliar além do original
-
-    // ── Modo de proporção fixa ──────────────────────────────────────────────
-    data class Fixed(val widthRatio: Int, val heightRatio: Int) : AspectRatioMode()
-
-    companion object {
-        val RATIO_16_9 = Fixed(16, 9)
-        val RATIO_4_3  = Fixed(4, 3)
-        val RATIO_1_1  = Fixed(1, 1)
-        val RATIO_9_16 = Fixed(9, 16)
-    }
-}
-```
-
-**Qual a diferença entre os modos?**
-
-```
-Vídeo 16:9 em um celular 9:16 (retrato):
-
- FillBounds          Crop               Inside           Fixed 16:9
-┌─────────┐        ┌─────────┐        ┌─────────┐       ┌─────────┐
-│▓▓▓▓▓▓▓▓▓│        │░░░░░░░░░│        │         │       │         │
-│▓▓▓▓▓▓▓▓▓│        │▓▓▓▓▓▓▓▓▓│        │▓▓▓▓▓▓▓▓▓│       │▓▓▓▓▓▓▓▓▓│
-│▓▓▓▓▓▓▓▓▓│ →      │▓▓▓▓▓▓▓▓▓│ →      │▓▓▓▓▓▓▓▓▓│ →     │▓▓▓▓▓▓▓▓▓│
-│▓▓▓▓▓▓▓▓▓│        │▓▓▓▓▓▓▓▓▓│        │▓▓▓▓▓▓▓▓▓│       │▓▓▓▓▓▓▓▓▓│
-│▓▓▓▓▓▓▓▓▓│        │░░░░░░░░░│        │         │       │         │
-└─────────┘        └─────────┘        └─────────┘       └─────────┘
-Distorcido         Recortado         Com barras        Container 16:9
-                  (conteúdo          (sem ampliar)    com barras pretas
-                  cropped top/bot)
-```
-
-> 💡 **Por que `sealed class` e não `enum`?** O modo `Fixed` precisa carregar dados (`widthRatio`, `heightRatio`). Enums não suportam campos por instância. A `sealed class` permite ter tanto `data object` (sem estado) quanto `data class` (com estado) na mesma hierarquia.
-
----
-
-### 7.2 🗄️ `CacheManager.kt` — O Cofre de Vídeos
-
-**O que é cache?**
-Quando você assiste um vídeo online, os dados chegam em pacotes pelo Wi-Fi/4G. O cache **guarda esses pacotes no celular**. Se você voltar para a mesma cena, não precisa baixar de novo — lê do armazenamento local. Mais rápido e economiza dados.
-
-**Por que é um Singleton?**
-
-> **Singleton** = uma classe que tem **apenas uma instância** em todo o app.
-
-O `SimpleCache` do Media3 tem uma limitação: **ele trava o diretório de cache**. Se você criar duas instâncias ao mesmo tempo, o segundo vai dar erro porque o diretório já está "ocupado".
-
-Analogia: é como uma sala de reunião com uma chave física. Só uma pessoa pode entrar por vez. O Singleton garante que você nunca vai ter dois processos tentando usar o mesmo cofre ao mesmo tempo.
-
-```kotlin
-object CacheManager { // "object" em Kotlin = Singleton automático!
-
-    @Volatile                    // ← Veja explicação abaixo
-    private var simpleCache: SimpleCache? = null
-
-    private val lock = Any()     // Objeto usado como "cadeado"
-
-    fun getCache(context: Context, cacheConfig: CacheConfig): SimpleCache {
-        // Verificação rápida (sem travar nada)
-        simpleCache?.let { return it }
-
-        // Se chegou aqui, precisa criar. Trava para garantir segurança entre threads.
-        synchronized(lock) {
-            // Verifica de novo DENTRO do lock (outro thread pode ter criado enquanto esperava)
-            simpleCache?.let { return it }
-
-            // Cria o cache em app.cacheDir/mediacache
-            val cacheDir = File(context.cacheDir, "mediacache")
-            val evictor = LeastRecentlyUsedCacheEvictor(cacheConfig.maxBytes) // Política LRU
-            val cache = SimpleCache(cacheDir, evictor)
-            simpleCache = cache
-            return cache
-        }
-    }
-}
-```
-
-**O que é `@Volatile`?**
-Imagine dois garçons (threads) que trabalham juntos. O garçom A atualiza o pedaço de papel do cliente. O garçom B lê o papel e pega a versão antiga porque estava com uma cópia na cabeça. `@Volatile` garante que **nenhum garçom use cópia em cache local** — todos leem sempre o papel original (memória principal).
-
-**O que é `synchronized(lock)`?**
-É a fila do banco. Quando você chega no guichê, ninguém pode entrar antes de você terminar. `synchronized` cria esse "guichê exclusivo" para que apenas um thread por vez execute aquele bloco de código.
-
-> ⚠️ **Erro Comum:** Nunca crie `SimpleCache` direto no ViewModel ou Activity! Sempre use o `CacheManager`. Se esquecer, você vai ver um erro como `"Cache is already in use"`.
-
----
-
-### 7.3 🧠 `PlayerViewModel.kt` — O Cérebro do App
-
-**O que é um ViewModel?**
-É uma classe que sobrevive à rotação da tela. Quando você gira o celular, a `Activity` é **destruída e recriada**, mas o `ViewModel` continua vivo. Isso significa que o vídeo continua de onde parou, sem precisar carregar de novo.
-
-Analogia: pense no ViewModel como o **gerente de uma loja**. Quando o turno muda (rotação = troca de turno), o gerente continua no cargo com todo o conhecimento. Os atendentes (Activities/Composables) podem mudar, mas o gerente lembra de tudo.
-
-#### O ViewModel não fala com o ExoPlayer diretamente — ele usa o `PlayerEngine`
-
-Em vez de manipular o `ExoPlayer` e o `DefaultPreloadManager` na mão, o `PlayerViewModel` depende apenas da interface **`PlayerEngine`**. Toda a "sujeira" do Media3 (criar fontes, preload, listeners) fica isolada na implementação `ExoPlayerEngine`.
-
-```kotlin
-class PlayerViewModel(
-    private val engine: PlayerEngine   // ← só conhece a interface, não o ExoPlayer
-) : ViewModel() { ... }
-```
-
-**Por que isso importa?** Porque o ViewModel deixa de ter qualquer dependência de Android ou Media3. Isso o torna testável em **JVM puro** (sem emulador), trocando o engine real por um fake. Veja as seções **7.6 `PlayerEngine`** e **🧪 Testes Unitários** abaixo.
-
-#### MVI no ViewModel: Intents, State e Effects
-
-```kotlin
-// INTENTS — O que o usuário pode PEDIR
-sealed class PlayerIntent {
-    object TogglePlayPause : PlayerIntent()  // "Quero pausar/resumir"
-    data class SeekTo(val positionMs: Long) : PlayerIntent()  // "Quero ir para 1:30"
-    data class LoadMediaList(val config: PlayerConfig) : PlayerIntent()  // "Carrega esses vídeos"
-    object NextItem : PlayerIntent()     // "Próximo vídeo"
-    object PreviousItem : PlayerIntent() // "Vídeo anterior"
-    object RetryLast : PlayerIntent()    // "Tenta de novo após erro"
-}
-
-// STATE — Como o app está agora (TODA a UI vem daqui)
-data class PlayerUiState(
-    val isBuffering: Boolean = false,       // Está carregando?
-    val isPlaying: Boolean = false,         // Está tocando?
-    val currentPositionMs: Long = 0L,       // Onde está o vídeo agora (em ms)
-    val durationMs: Long = 0L,              // Duração total do vídeo
-    val errorMessage: String? = null,       // Mensagem de erro (null = sem erro)
-    val currentIndex: Int = 0,             // Qual vídeo da playlist está tocando
-    val totalItems: Int = 0                // Total de vídeos na playlist
-)
-
-// EFFECTS — Eventos únicos (não devem se repetir ao girar a tela)
-sealed class PlayerEffect {
-    data class ShowErrorToast(val message: String) : PlayerEffect()  // Mostrar erro
-    object OnPlaylistEnded : PlayerEffect()  // Todos os vídeos acabaram
-}
-```
-
-#### StateFlow vs SharedFlow — Qual a diferença?
-
-Esta é uma das partes mais confusas para iniciantes. Vamos simplificar:
-
-| | `StateFlow` (uiState) | `SharedFlow` (effects) |
-|---|---|---|
-| **O que guarda** | O estado ATUAL | Eventos que aconteceram |
-| **Ao girar a tela** | ✅ Nova tela recebe o estado atual | ❌ Evento NÃO é repetido |
-| **Exemplo** | "O vídeo está em pausa em 01:30" | "O vídeo acabou" (não pode disparar de novo!) |
-| **Analogia** | Placar de um jogo | Gol marcado (acontece uma vez) |
-
-Se o evento de "fim de playlist" fosse um `StateFlow`, ao girar o celular, o app poderia tentar avançar para o próximo vídeo mais uma vez — o que causaria um bug. O `SharedFlow` previne isso.
-
-#### Como o ViewModel decide a estratégia de carregamento
-
-```kotlin
-private fun loadMediaList(config: PlayerConfig) {
-    // Automaticamente escolhe a estratégia certa:
-    prefetchEnabled = config.mediaList.size > 1
-
-    if (prefetchEnabled) {
-        loadWithPreload(config)  // 2+ vídeos → usa PreloadManager (pré-carrega vizinhos)
-    } else {
-        loadDirect(config)       // 1 vídeo → carrega direto no ExoPlayer (mais simples)
-    }
-}
-```
-
-**Por que essa distinção?** O `DefaultPreloadManager` tem overhead de configuração. Para um único vídeo, é desperdício. Para playlists, ele garante que o próximo vídeo já começa a carregar enquanto você ainda assiste o atual — como o YouTube faz.
-
-#### Estratégia de Pré-carregamento por Distância
-
-Quando você tem uma playlist, o app decide **o quanto pré-carregar** baseado em quão longe o vídeo está do que está tocando agora:
-
-```kotlin
-override fun getTargetPreloadStatus(rankingData: Int): DefaultPreloadManager.PreloadStatus {
-    val distance = abs(rankingData - currentPlayingIndex)
-    return when (distance) {
-        1    -> PreloadStatus.specifiedRangeLoaded(3_000L)  // Vizinho: pré-carrega 3s
-        2    -> PreloadStatus.PRELOAD_STATUS_TRACKS_SELECTED // 2 de distância: escolhe faixas
-        3, 4 -> PreloadStatus.PRELOAD_STATUS_SOURCE_PREPARED // 3-4: prepara o manifesto
-        else -> PreloadStatus.PRELOAD_STATUS_NOT_PRELOADED  // Muito longe: não pré-carrega
-    }
-}
-```
-
-Analogia: é como preparar uma fila de restaurante. O próximo cliente (distância 1) já está com a mesa arrumada. O que está 2 posições atrás já escolheu o prato. Os outros estão esperando na fila.
-
----
-
-### 7.4 🖥️ `VideoPlayerScreen.kt` — A Interface Visual
-
-Este é o Composable que desenha a tela do player. Ele aceita um parâmetro `aspectRatioMode` **nullable** para controlar como o vídeo é exibido:
-
-```kotlin
-@Composable
-fun VideoPlayerScreen(
-    viewModel: PlayerViewModel = viewModel(),
-    aspectRatioMode: AspectRatioMode? = null, // null = não aplica proporção (só preenche o host)
-    pauseOnDispose: Boolean = true,           // pausar ao sair da composição?
-    controlsContent: ... // UI de controles customizável
-)
-```
-
-Internamente, o modo escolhido é aplicado em duas camadas:
-
-```kotlin
-// Camada 1: tamanho do container (Compose layout)
-val contentModifier = when (aspectRatioMode) {
-    is AspectRatioMode.FillBounds -> Modifier.fillMaxSize()
-    is AspectRatioMode.Crop       -> Modifier.fillMaxSize()
-    is AspectRatioMode.Inside     -> Modifier.fillMaxSize()
-    is AspectRatioMode.Fixed      -> Modifier.aspectRatio(aspectRatioMode.ratio)
-    null                          -> Modifier.fillMaxSize() // sem proporção própria
-}
-
-// Camada 2: renderização do vídeo (Media3 nativo — equivalente ao ResizeMode do PlayerView XML)
-val contentScale = when (aspectRatioMode) {
-    is AspectRatioMode.FillBounds -> ContentScale.FillBounds
-    is AspectRatioMode.Crop       -> ContentScale.Crop
-    is AspectRatioMode.Inside     -> ContentScale.Inside
-    is AspectRatioMode.Fixed      -> ContentScale.Fit
-    null                          -> ContentScale.Fit
-}
-
-ContentFrame(player = player, modifier = contentModifier, contentScale = contentScale)
-```
-
-O `Box` externo sempre tem `fillMaxSize()` e fundo preto — as barras pretas do letterbox/pillarbox aparecem naturalmente como o fundo.
-
-> 💡 **Quando usar `aspectRatioMode = null`?** Quando quem hospeda o player **já define a forma** do container. É o caso do **feed**: cada card já fixa um `Box` em 16:9, então reaplicar uma proporção dentro dele seria redundante. Passando `null`, o player apenas preenche o card com `ContentScale.Fit`. Na tela única (`MainActivity`), onde o usuário escolhe a proporção pelo dropdown, passamos um modo concreto.
-
-#### `pauseOnDispose` — pausar (ou não) ao sair da tela
-
-O player é reaproveitado em dois contextos com necessidades opostas, controladas por este parâmetro:
-
-- **Tela única (`true`, padrão):** sair da tela = pausar o vídeo (veja o `DisposableEffect` abaixo).
-- **Feed (`false`):** ao rolar de um card para outro, o `PlayerViewModel` já troca para o novo item. Pausar no `onDispose` do card antigo cancelaria esse autoplay.
-
-Vamos entender as demais partes importantes:
-
-#### DisposableEffect — Fechar a Torneira ao Sair
-
-```kotlin
-DisposableEffect(pauseOnDispose) {
-    // Este bloco roda quando o Composable ENTRA na tela
-
-    onDispose {
-        // Este bloco roda quando o Composable SAI da tela
-        if (pauseOnDispose) player.pause() // Para o vídeo para não tocar em background
-    }
-}
-```
-
-Analogia: é como fechar a torneira quando você sai do banheiro. Sem o `DisposableEffect`, o vídeo continuaria tocando (e consumindo bateria) mesmo depois de você fechar a tela.
-
-> ⚠️ **Erro Comum:** Esquecer de liberar recursos no `onDispose` é uma das causas mais comuns de vazamento de memória (memory leak) em apps Android.
-
-#### Auto-hide dos Controles
-
-Os controles somem sozinhos após 3 segundos quando o vídeo está tocando. Funciona assim:
-
-```
-Vídeo está tocando
-    ↓ após 3 segundos sem interação
-Controles ficam invisíveis (animação fade out)
-    ↓ usuário toca a tela
-Controles aparecem (animação fade in)
-    ↓ temporizador reinicia
-```
-
-#### Modo Paisagem Imersivo
-
-Quando o usuário gira o celular para o lado, o app:
-1. Detecta a orientação via `LocalConfiguration.current.orientation`
-2. Esconde a barra do topo e o formulário
-3. Usa `WindowInsetsControllerCompat` para esconder as barras do sistema (status bar + navigation bar)
-4. O vídeo expande para ocupar a tela inteira
-
----
-
-### 7.5 🏗️ `MediaSourceBuilder.kt` — A Fábrica de Vídeos
-
-Este arquivo pega a URL e as configurações e transforma em um objeto `MediaSource` que o ExoPlayer entende.
-
-**O que é HLS e DASH?** (Veja o Glossário no final, mas aqui vai o essencial)
-
-| Formato | Extensão | Usado por |
-|---|---|---|
-| HLS | `.m3u8` | Apple, a maioria dos CDNs |
-| DASH | `.mpd` | YouTube, Netflix |
-
-Ambos funcionam da mesma forma: o vídeo é dividido em pedaços pequenos (chunks), e o player baixa chunk por chunk, adaptando a qualidade conforme a velocidade da internet.
-
----
-
-### 7.6 🔌 `PlayerEngine` — A Camada de Abstração do Player
-
-Esta é a peça que **desacopla o ViewModel do ExoPlayer**. Em vez de o ViewModel manipular o Media3 diretamente, ele conversa com uma interface neutra.
-
-**Por que separar?** Duas razões práticas:
-
-1. **Testabilidade.** O `ExoPlayer` precisa de um `Context` Android e de threads reais de mídia — impossível instanciar num teste JVM comum. Escondendo-o atrás de uma interface, conseguimos trocar por um *fake* nos testes.
-2. **Organização.** Toda a complexidade de preload, criação de fontes e listeners fica num único lugar (`ExoPlayerEngine`), não espalhada pelo ViewModel.
+O `ExoPlayer` exige `Context` Android e cria threads próprias de mídia. Se o `PlayerViewModel` falasse direto com ele, ninguém testaria o VM em JVM puro. Resolvendo:
 
 ```
 PlayerViewModel  ──►  PlayerEngine (interface)
                           ▲          ▲
                           │          │
               ExoPlayerEngine    FakePlayerEngine
-              (produção, Media3)  (testes, Kotlin puro)
+              (produção)         (testes JVM)
 ```
 
-**Três arquivos compõem essa camada:**
+O VM nunca importa `androidx.media3.*` — só `PlayerEngine` + `PlayerEventListener`. Resultado: **27 testes JUnit rodam em segundos**, sem emulador.
 
-| Arquivo | Papel |
-|---|---|
-| `PlayerEngine.kt` | A **interface** (contrato): `play()`, `pause()`, `seekTo()`, `loadDirect()`, `registerForPreload()`, `playPreloadedItemAt()`, etc. |
-| `PlayerEventListener.kt` | Contrato de **eventos** (callbacks) sem nenhum tipo do Android/Media3 — `onIsPlayingChanged`, `onPlaybackStateChanged`, `onPositionChanged`, `onMediaItemIndexChanged`. |
-| `ExoPlayerEngine.kt` | A **implementação real**: cria o `ExoPlayer` + `DefaultPreloadManager`, traduz os `Player.Listener` do Media3 para o `PlayerEventListener` neutro. |
+### Diagrama completo
+
+```mermaid
+graph TD
+    subgraph "UI (3 telas)"
+        MS[MainScreen<br/>Formulário + player]
+        FS[VideoFeedScreen<br/>LazyColumn de cards]
+        RS[ReelsScreen<br/>VerticalPager full-screen]
+        VPS[VideoPlayerScreen<br/>ContentFrame + controles]
+    end
+
+    subgraph "Lógica MVI"
+        VM[PlayerViewModel]
+        State[PlayerUiState<br/>isBuffering, isPlaying, currentIndex,<br/>isPrefetchEnabled, preloadedIndices...]
+        Effects[PlayerEffect<br/>ShowErrorToast, OnPlaylistEnded]
+    end
+
+    subgraph "Engine (contrato + impl)"
+        ENG[PlayerEngine — interface]
+        EP[ExoPlayerEngine + ExoPlayer<br/>+ DefaultPreloadManager]
+    end
+
+    subgraph "Sistema adaptativo"
+        NQP[NetworkQualityProvider]
+        DCT[DeviceCapabilityTier]
+        BA[BandwidthAdvisor]
+        APS[AdaptivePreloadStatusControl<br/>+ PreloadPolicy]
+    end
+
+    subgraph "Mídia / cache"
+        MSB[MediaSourceBuilder]
+        CM[CacheManager<br/>SimpleCache 200 MB + OkHttp]
+    end
+
+    MS --> VPS
+    FS --> VPS
+    RS --> VPS
+    VPS -- "Intent" --> VM
+    VM -- "comanda" --> ENG
+    ENG --- EP
+    EP -- "eventos" --> VM
+    VM --> State
+    VM --> Effects
+    State -- "redesenha" --> VPS
+
+    EP --> APS
+    EP --> BA
+    NQP --> APS
+    DCT --> APS
+    EP --> MSB
+    MSB --> CM
+```
+
+---
+
+## 🔍 Componentes Core — Detalhados
+
+### 7.1 📄 `PlayerConfig.kt` — As Fichas Técnicas
+
+Aqui ficam as data classes que descrevem **o que carregar** e **como configurar buffer/cache**:
+
+```kotlin
+data class MediaItemConfig(
+    val url: String,
+    val format: MediaFormat = MediaFormat.HLS,   // HLS (.m3u8) ou DASH (.mpd)
+    val clipDurationMs: Long? = null             // corte opcional (em ms)
+)
+
+enum class MediaFormat { HLS, DASH }
+
+data class CacheConfig(
+    val maxBytes: Long = 200L * 1024L * 1024L    // 200 MB de cache LRU em disco
+)
+
+data class BufferConfig(
+    val minBufferMs: Int = 5_000,                       // mínimo bufferizado
+    val maxBufferMs: Int = 50_000,                      // limite de buffer adiante
+    val bufferForPlaybackMs: Int = 2_500,               // tempo até começar a tocar
+    val bufferForPlaybackAfterRebufferMs: Int = 5_000   // idem após rebuffer
+)
+
+data class PlayerConfig(
+    val mediaList: List<MediaItemConfig>,
+    val cacheConfig: CacheConfig = CacheConfig(),
+    val bufferConfig: BufferConfig = BufferConfig(),
+    // Força playlist interna do ExoPlayer (loadDirect + seekToItem) em vez do
+    // DefaultPreloadManager. Ideal para Reels: troca de item praticamente sem
+    // tear-down do pipeline. Mantenha `false` para feeds normais (cards), onde o
+    // DefaultPreloadManager é o caminho recomendado.
+    val forcePlaylistMode: Boolean = false
+)
+```
+
+> 💡 **Por que `data class`?** Kotlin gera `equals()`, `hashCode()` e `copy()` automaticamente. No MVI o `copy()` é vital: `state.copy(isPlaying = true)` produz um **novo** estado sem mutar o anterior.
+
+> 💡 **Por que `forcePlaylistMode` existe?** O `DefaultPreloadManager` é ótimo para feeds de cards (itens distintos, autoplay quando o card mais visível muda). Mas em Reels (vídeo após vídeo, swipe sequencial) **o gargalo é o `setMediaSource + prepare()` que o caminho de prefetch executa a cada troca** — isso sempre dispara `STATE_BUFFERING` e o spinner pisca. A playlist interna do ExoPlayer + `seekToItem(index, 0L)` evita esse tear-down. Veja a seção **ReelsScreen** abaixo.
+
+---
+
+### 7.2 🗄️ `CacheManager.kt` — Cofre LRU + Cliente HTTP
+
+Singleton com **três responsabilidades**:
+
+1. **`SimpleCache` LRU de 200 MB** em `app.cacheDir/mediacache`. Compartilhado entre playback e preload (mesmos bytes não baixam duas vezes).
+2. **`OkHttpClient` singleton** com retry, fallback para HTTP/1.1 (resolve `StreamReset` em alguns emuladores) e interceptor que injeta um User-Agent de browser (muitos CDNs bloqueiam clientes "anônimos").
+3. **`CacheDataSource.Factory`** que combina os dois: upstream OkHttp + sink no SimpleCache, com flags `FLAG_BLOCK_ON_CACHE` (não baixa duas vezes em paralelo) e `FLAG_IGNORE_CACHE_ON_ERROR` (cache corrompido → segue baixando).
+
+```kotlin
+object CacheManager { // object = Singleton automático em Kotlin
+
+    @Volatile private var simpleCache: SimpleCache? = null
+    @Volatile private var okHttpClient: OkHttpClient? = null
+    private val lock = Any()
+
+    fun getCacheDataSourceFactory(context: Context, cacheConfig: CacheConfig, externalClient: OkHttpClient? = null) : CacheDataSource.Factory {
+        val cache = getCache(context, cacheConfig)
+        val client = externalClient ?: getOkHttpClient()
+        val upstreamFactory = OkHttpDataSource.Factory(client)
+        val cacheDataSinkFactory = CacheDataSink.Factory().setCache(cache)
+        return CacheDataSource.Factory()
+            .setCache(cache)
+            .setUpstreamDataSourceFactory(upstreamFactory)
+            .setCacheWriteDataSinkFactory(cacheDataSinkFactory)
+            .setFlags(CacheDataSource.FLAG_BLOCK_ON_CACHE or CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+}
+```
+
+**Por que `@Volatile` + `synchronized` no padrão *double-checked locking*?**
+- `@Volatile` garante que cada thread vê o valor mais recente da referência (sem cache de CPU).
+- O `synchronized(lock)` só é pago na primeira chamada. Depois, o `simpleCache?.let { return it }` no início escapa cedo, sem custo.
+
+**Por que `CacheManager.release()` no `onDestroy()` do app?** O `SimpleCache` mantém um *file lock* no diretório. Se você não liberar, o próximo `SimpleCache` no mesmo processo (raro em prod, comum em desenvolvimento com hot-reload) lança `Cache is already in use`.
+
+---
+
+### 7.3 🏗️ `MediaSourceBuilder.kt` — Da URL ao `MediaSource`
+
+```kotlin
+object MediaSourceBuilder {
+
+    fun createFactory(context: Context, cacheConfig: CacheConfig = CacheConfig()): DefaultMediaSourceFactory {
+        val cacheDataSourceFactory = CacheManager.getCacheDataSourceFactory(context, cacheConfig)
+        return DefaultMediaSourceFactory(context).setDataSourceFactory(cacheDataSourceFactory)
+    }
+
+    fun build(context: Context, config: MediaItemConfig, cacheConfig: CacheConfig = CacheConfig()): MediaSource =
+        createFactory(context, cacheConfig).createMediaSource(config.toMediaItem())
+}
+
+fun MediaItemConfig.toMediaItem(mediaId: String? = null): MediaItem = MediaItem.Builder()
+    .setUri(url)
+    .apply { if (mediaId != null) setMediaId(mediaId) }
+    .setMimeType(when (format) {
+        MediaFormat.HLS -> MimeTypes.APPLICATION_M3U8
+        MediaFormat.DASH -> MimeTypes.APPLICATION_MPD
+    })
+    .apply {
+        clipDurationMs?.let {
+            setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder().setEndPositionMs(it).build()
+            )
+        }
+    }
+    .build()
+```
+
+> 💡 **Por que `mediaId` é opcional?** O `DefaultPreloadManager` indexa por `MediaItem.equals`. Quando várias posições compartilham a **mesma URL** (caso dos Reels mock, com 30 cópias do test stream), sem um `mediaId` único por posição todas colapsam em uma só entrada de preload — preload morto. Setando `mediaId = index.toString()` no momento de registrar, cada posição vira um item distinto. Para o caminho normal de playback (`build`) o `mediaId` fica nulo e tudo segue funcionando.
+
+---
+
+### 7.4 🔌 `PlayerEngine` — A Interface
 
 ```kotlin
 interface PlayerEngine {
-    /** Instância Media3 para o ContentFrame. Não usar em testes unitários do ViewModel. */
+
+    /** Instância Media3 — só para o ContentFrame da UI. Testes do VM não devem tocar. */
     val player: Player
 
     fun setEventListener(listener: PlayerEventListener)
@@ -621,303 +363,763 @@ interface PlayerEngine {
 
     val isPlaying: Boolean
     val currentPosition: Long
-    // ...
+    val duration: Long
+    val currentMediaItemIndex: Int
+
     fun play()
     fun pause()
+    fun seekTo(positionMs: Long)
+    fun seekToItem(index: Int, positionMs: Long = 0L)
+    fun seekToNext()
+    fun seekToPrevious()
+
+    /** Caminho playlist: carrega tudo no ExoPlayer e usa seekToItem para trocar. */
     fun loadDirect(items: List<MediaItemConfig>, cacheConfig: CacheConfig)
+
+    /** Caminho prefetch: registra os itens no DefaultPreloadManager. */
     fun registerForPreload(items: List<MediaItemConfig>)
+
+    /** Reproduz `index` usando a fonte pré-carregada (fallback: builda direto). */
     fun playPreloadedItemAt(index: Int, config: MediaItemConfig, cacheConfig: CacheConfig)
+
+    fun setCurrentPreloadIndex(index: Int)
+    fun invalidatePreload()
+    fun resetPreload()
+
+    /** Força preload de um índice independente da distância. */
+    fun requestPreloadAt(index: Int) = Unit
+
     fun release()
 }
 ```
 
-> 💡 **A propriedade `player`** é a única que ainda expõe um tipo Media3 (`Player`), porque o `ContentFrame` da UI precisa dela. Nos testes do ViewModel essa propriedade nunca é tocada (o fake lança erro se alguém tentar usá-la).
-
-**Como o ViewModel é construído?** Como ele não é mais um `AndroidViewModel`, usamos uma factory que injeta o engine real:
+E o contrato neutro de eventos (sem Android/Media3) que o engine reporta para o ViewModel:
 
 ```kotlin
-// PlayerViewModelFactory.kt
-class PlayerViewModelFactory(private val app: Application, ...) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T =
-        PlayerViewModel(ExoPlayerEngine(app, bufferConfig)) as T
+interface PlayerEventListener {
+    fun onIsPlayingChanged(isPlaying: Boolean) = Unit
+    fun onPlaybackStateChanged(isBuffering: Boolean, isEnded: Boolean) = Unit
+    fun onPositionChanged(positionMs: Long, durationMs: Long) = Unit
+    fun onMediaItemIndexChanged(index: Int) = Unit
+    fun onPreloadCompleted(index: Int) = Unit
 }
 ```
 
-E na UI, o helper `playerViewModel()` (em `util/ViewModelExt.kt`) cuida de obter o ViewModel com a factory correta, escopado ao `ViewModelStoreOwner` atual (compatível com Navigation 3):
-
-```kotlin
-@Composable
-fun MainScreen(viewModel: PlayerViewModel = playerViewModel()) { ... }
-```
+> 💡 **A propriedade `player: Player`** é o único vazamento controlado de tipo Media3 — necessária porque o `ContentFrame` do compose-ui-material3 da Media3 precisa de um `Player`. Em testes, o `FakePlayerEngine` lança erro se alguém tentar acessá-la (o VM nunca acessa).
 
 ---
 
-## 🧪 Testes Unitários
+### 7.5 🎛️ `ExoPlayerEngine.kt` — A Implementação Real
 
-Graças à camada `PlayerEngine`, o `PlayerViewModel` é testado em **JVM puro** (`src/test/`) — roda em segundos, sem emulador.
-
-**As peças do setup de teste:**
-
-| Arquivo | Papel |
-|---|---|
-| `FakePlayerEngine.kt` | Implementação fake do `PlayerEngine` em Kotlin puro. Registra quais métodos foram chamados (ex.: `loadDirectCalls`, `playPreloadedAtCalls`) e expõe helpers `simulate...()` para disparar eventos como se viessem do ExoPlayer. |
-| `MainDispatcherRule.kt` | Regra JUnit que substitui `Dispatchers.Main` por um `TestDispatcher`. Sem ela, o `viewModelScope` (que usa `Dispatchers.Main`) quebraria em ambiente de teste. |
-| `PlayerViewModelTest.kt` | Os testes em si — verificam a lógica de carregamento, navegação na playlist, play/pause, seek, retry e a tradução de eventos do engine em `uiState`/`effects`. |
-
-**Exemplo de teste** — verifica que uma lista com 1 item usa `loadDirect` (carga direta), enquanto 2+ itens ativam o preload:
+Faz três coisas centrais no construtor:
 
 ```kotlin
-@Test
-fun `LoadMediaList com 1 item chama loadDirect e atualiza totalItems`() = runTest {
-    val config = PlayerConfig(mediaList = listOf(singleItem))
+class ExoPlayerEngine(
+    private val app: Application,
+    bufferConfig: BufferConfig = BufferConfig(),
+    cacheConfig: CacheConfig = CacheConfig()
+) : PlayerEngine {
 
-    viewModel.handleIntent(PlayerIntent.LoadMediaList(config))
-    advanceUntilIdle()
+    // ① Bandwidth meter SINGLETON do processo — playback + preload contribuem para
+    //    a mesma estimativa, e o BandwidthAdvisor lê esse mesmo objeto.
+    private val bandwidthMeter = DefaultBandwidthMeter.getSingletonInstance(app)
+    private val bandwidthAdvisor = BandwidthAdvisor(bandwidthMeter)
 
-    assertEquals(1, fakeEngine.loadDirectCalls.size)
-    assertEquals(1, viewModel.uiState.value.totalItems)
-}
-```
+    // ② Buffer tunado com base no bandwidth medido (≤ que o BufferConfig do chamador).
+    private val tunedBufferConfig = bandwidthAdvisor.recommendedBufferConfig(bufferConfig)
 
-E os helpers `simulate...()` permitem testar a reação do ViewModel a eventos do player sem nenhum vídeo real:
+    // ③ Preload control com policy por network tier + cap por device capability.
+    private val preloadControl = AdaptivePreloadStatusControl().also { ctrl ->
+        ctrl.deviceMaxDistance = DeviceCapabilityTier.assess(app).maxPreloadDistance()
+        ctrl.policy = NetworkQualityProvider(app).currentTier().toPolicy()
+    }
 
-```kotlin
-@Test
-fun `onIsPlayingChanged atualiza isPlaying no uiState`() = runTest {
-    fakeEngine.simulateIsPlayingChanged(true)
-    assertTrue(viewModel.uiState.value.isPlaying)
-}
-```
+    private val preloadBuilder = DefaultPreloadManager.Builder(app, preloadControl)
+        .apply {
+            setLoadControl(DefaultLoadControl.Builder()
+                .setBufferDurationsMs(tunedBufferConfig.minBufferMs, ...)
+                .build())
+            // Cache injetado AQUI: bytes preloadados vão para o mesmo LRU de 200 MB
+            // que o player ativo usa. Sem isso, preload baixa e descarta tudo.
+            setMediaSourceFactory(MediaSourceBuilder.createFactory(app, cacheConfig))
+        }
 
-**Como rodar os testes:**
+    private val preloadManager = preloadBuilder.build()
+    private val exoPlayer = preloadBuilder.buildExoPlayer()
 
-```bash
-./gradlew test            # roda todos os testes unitários
-./gradlew testDebugUnitTest   # variante debug
-```
-
-Ou no Android Studio: clique direito na pasta `src/test` → `Run 'Tests in ...'`.
-
-> 📦 **Dependências de teste** (em `gradle/libs.versions.toml` + `app/build.gradle.kts`): `kotlinx-coroutines-test` (para `runTest`/`advanceUntilIdle`) e `androidx-lifecycle-viewmodel-compose`.
-
----
-
-## 🔄 Fluxo Completo — De A a Z
-
-Vamos seguir o caminho de um clique no botão "Carregar e Reproduzir" até o vídeo tocar:
-
-```
-PASSO 1: Usuário digita a URL e aperta o botão
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📍 Arquivo: MainActivity.kt (MainScreen composable)
-
-O botão chama:
-viewModel.handleIntent(
-    PlayerIntent.LoadMediaList(
-        PlayerConfig(mediaList = listOf(MediaItemConfig(url = url)))
-    )
-)
-```
-
-```
-PASSO 2: ViewModel recebe o Intent
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📍 Arquivo: PlayerViewModel.kt
-
-fun handleIntent(intent: PlayerIntent) {
-    when (intent) {
-        is PlayerIntent.LoadMediaList -> loadMediaList(intent.config)
+    init {
+        exoPlayer.addListener(internalListener)
+        // Playlist-internal preload (Media3 1.4+): no caminho playlist (loadDirect +
+        // seekToItem), o ExoPlayer mantém os próximos itens com até 5 s prontos —
+        // troca entre itens praticamente instantânea no Reels.
+        exoPlayer.setPreloadConfiguration(ExoPlayer.PreloadConfiguration(5_000_000L))
     }
 }
 ```
 
-```
-PASSO 3: ViewModel decide a estratégia
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📍 Arquivo: PlayerViewModel.kt
-
-Como é 1 vídeo → chama loadDirect(config)
-```
-
-```
-PASSO 4: MediaSourceBuilder prepara a fonte de vídeo
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📍 Arquivo: MediaSourceBuilder.kt + CacheManager.kt
-
-MediaSourceBuilder.build(app, mediaItemConfig, cacheConfig)
-  → CacheManager.getCacheDataSourceFactory() (cria/reutiliza cache)
-  → Cria um HlsMediaSource ou DashMediaSource com cache integrado
-  → Retorna o MediaSource pronto para o ExoPlayer
-```
-
-```
-PASSO 5: ExoPlayer começa a reproduzir
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📍 Arquivo: PlayerViewModel.kt
-
-player.addMediaSource(source)
-player.playWhenReady = true  // Vai tocar assim que estiver pronto
-player.prepare()             // Começa a baixar e decodificar
-```
-
-```
-PASSO 6: ExoPlayer avisa o ViewModel via Listener
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📍 Arquivo: PlayerViewModel.kt (playerListener)
-
-onPlaybackStateChanged(STATE_BUFFERING)
-  → _uiState.value = _uiState.value.copy(isBuffering = true)
-  → A tela exibe a barra de carregamento no topo
-```
-
-```
-PASSO 7: Vídeo começa a tocar
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📍 Arquivo: PlayerViewModel.kt (playerListener)
-
-onIsPlayingChanged(isPlaying = true)
-  → _uiState.value = _uiState.value.copy(isPlaying = true, isBuffering = false)
-  → Polling de posição começa (atualiza a barra de progresso a cada 500ms)
-```
-
-```
-PASSO 8: VideoPlayerScreen reage ao novo estado
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📍 Arquivo: VideoPlayerScreen.kt
-
-val uiState by viewModel.uiState.collectAsState()
-// Compose detecta mudança no uiState e redesenha automaticamente
-// Ícone de ▶️ muda para ⏸️, barra de progresso começa a avançar
-```
-
----
-
-## 📖 Glossário — Termos Importantes
-
-### ExoPlayer / Media3
-**ExoPlayer** é a biblioteca de reprodução de vídeo mais usada no Android. **Media3** é a versão mais nova, mantida pelo Google junto com o Jetpack. O ExoPlayer cuida de tudo: baixar os dados, decodificar o vídeo, sincronizar o áudio, etc. Você não precisa escrever o codec — só configurar e comandar.
-
-### HLS (HTTP Live Streaming)
-Formato criado pela Apple. O vídeo é dividido em segmentos de alguns segundos. Um arquivo `.m3u8` lista todos os segmentos e as qualidades disponíveis. Quando a internet fica lenta, o player automaticamente troca para uma qualidade mais baixa.
-
-### DASH (Dynamic Adaptive Streaming over HTTP)
-Similar ao HLS, mas criado pelo MPEG. O arquivo de manifesto tem extensão `.mpd`. É o formato usado pelo YouTube e Netflix.
-
-### MVI (Model-View-Intent)
-Arquitetura onde: **Model** = os dados (estado), **View** = a tela, **Intent** = ações do usuário. O fluxo é sempre unidirecional: View → Intent → ViewModel → State → View.
-
-### StateFlow
-Um `Flow` que sempre tem um valor atual. Quem "observa" ele recebe o estado mais recente imediatamente ao se inscrever. Ideal para representar estado de UI que precisa ser lembrado (ex: posição do vídeo).
-
-### SharedFlow
-Um `Flow` sem estado. Os eventos emitidos só chegam para quem está escutando naquele momento. Ideal para eventos pontuais que não devem ser repetidos (ex: "playlist encerrou", "erro ao carregar").
-
-### Singleton
-Um padrão de design onde uma classe tem **apenas uma instância** em todo o app. Em Kotlin, basta usar `object` em vez de `class`. Usado no `CacheManager` para evitar dois processos abrindo o mesmo diretório de cache simultaneamente.
-
-### Jetpack Compose
-Framework moderno do Android para criar interfaces. Em vez de XML, você escreve funções Kotlin com anotação `@Composable`. O Compose "recompõe" (redesenha) automaticamente quando o estado muda, sem você precisar chamar `notifyDataSetChanged()` ou `invalidate()`.
-
-### DisposableEffect
-Um efeito colateral em Compose que tem um **ciclo de vida**. O código dentro dele roda quando o Composable entra na tela, e o bloco `onDispose` roda quando o Composable sai da tela. Essencial para liberar recursos (player, sensores, listeners).
-
-### AspectRatioMode
-Sealed class que define como o vídeo é dimensionado no player. Atua em duas camadas: `Modifier.aspectRatio()` (Compose) controla o tamanho do container, e `ContentScale` (Media3) controla a renderização do vídeo dentro do frame. Modos disponíveis: `FillBounds` (estica), `Crop` (zoom/recorte), `Inside` (fit sem ampliar), `Fixed(w, h)` (proporção fixa com letterbox/pillarbox). O parâmetro no `VideoPlayerScreen` é **nullable**: `null` significa "não aplicar proporção" — o player apenas preenche o container do host (usado no feed, cujo card já tem forma 16:9).
-
-### PlayerEngine
-Interface que abstrai toda a interação com o `ExoPlayer` e o `DefaultPreloadManager`. O `PlayerViewModel` depende só dela, não do Media3 — o que permite testes JVM puros. Implementada por `ExoPlayerEngine` (produção) e `FakePlayerEngine` (testes). Os eventos do player chegam ao ViewModel via `PlayerEventListener`, um contrato de callbacks sem tipos do Android/Media3.
-
-### ContentScale (Media3 / Compose)
-Interface do Compose usada pelo `ContentFrame` do Media3 para controlar o `ResizeMode` do ExoPlayer de forma declarativa. Equivalente ao `setResizeMode()` do `PlayerView` XML. Os valores mais usados: `Fit` (encaixa preservando proporção), `FillBounds` (estica para preencher), `Crop` (zoom para preencher sem distorção), `Inside` (encaixa sem ampliar além do original).
-
-### LRU (Least Recently Used)
-Estratégia de cache que descarta primeiro o item acessado há mais tempo. Se o cache está cheio (200 MB) e você quer guardar mais dados, o vídeo que você assistiu há mais tempo é removido primeiro.
-
----
-
-## ♻️ Como Reusar em Outro Projeto
-
-### Carregando um único vídeo
+E os dois caminhos de carga:
 
 ```kotlin
-// Dentro de qualquer Composable
-val viewModel: PlayerViewModel = viewModel()
+// Caminho PLAYLIST (forcePlaylistMode = true)
+override fun loadDirect(items: List<MediaItemConfig>, cacheConfig: CacheConfig) {
+    exoPlayer.stop(); exoPlayer.clearMediaItems(); preloadManager.reset()
+    items.forEach { item ->
+        exoPlayer.addMediaSource(MediaSourceBuilder.build(app, item, cacheConfig))
+    }
+    exoPlayer.playWhenReady = true
+    exoPlayer.prepare()   // UMA VEZ; trocas futuras são seekToItem.
+}
 
-// Carrega e reproduz um vídeo HLS
-viewModel.handleIntent(
-    PlayerIntent.LoadMediaList(
-        PlayerConfig(
-            mediaList = listOf(
-                MediaItemConfig(
-                    url = "https://seu-servidor.com/video.m3u8",
-                    format = MediaFormat.HLS
-                )
-            )
-        )
+// Caminho PREFETCH (default para 2+ itens)
+override fun registerForPreload(items: List<MediaItemConfig>) {
+    exoPlayer.stop(); exoPlayer.clearMediaItems(); preloadManager.reset()
+    preloadControl.forcedIndices = emptySet()
+    items.forEachIndexed { index, item ->
+        preloadManager.add(item.toMediaItem(mediaId = index.toString()), index)
+    }
+    preloadManager.invalidate()
+}
+
+override fun playPreloadedItemAt(index: Int, config: MediaItemConfig, cacheConfig: CacheConfig) {
+    val mediaItem = config.toMediaItem(mediaId = index.toString())
+    val source = preloadManager.getMediaSource(mediaItem)
+        ?: MediaSourceBuilder.build(app, config, cacheConfig) // fallback
+    exoPlayer.setMediaSource(source)
+    exoPlayer.playWhenReady = true
+    exoPlayer.prepare()
+}
+```
+
+> 💡 **Por que dois caminhos?** Porque eles otimizam UX **diferentes**:
+> - **Prefetch** (`registerForPreload` + `playPreloadedItemAt`): bom para **carrosséis com itens distintos** (Feed de cards). A cada autoplay troca a fonte do player. O cache pré-aquecido garante que o próximo item já está em disco.
+> - **Playlist** (`loadDirect` + `seekToItem`): bom para **playback sequencial contínuo** (Reels). Uma única `prepare()`; trocas são apenas `seekTo(index, 0)`. Sem flash de buffering.
+
+> 💡 **O bandwidth meter precisa ser o mesmo objeto?** Sim. Pegando o singleton do processo, todo download (playback ou preload) atualiza a mesma estimativa. O `BandwidthAdvisor` consulta esse mesmo objeto, então a rede medida pelo preload influencia o buffer do playback automaticamente.
+
+---
+
+### 7.6 🌐 Sistema Adaptativo (4 classes)
+
+O preload **não é fixo**. Ele combina três sinais e converte em decisões.
+
+#### `NetworkQualityProvider.kt` — Tier da conexão
+
+Classifica em quatro tiers via `ConnectivityManager` + `NetworkCapabilities` (API 29+) ou `TelephonyManager` (legado):
+
+| Tier | Critério |
+|---|---|
+| `WIFI` | Transporte Wi-Fi ou Ethernet. |
+| `CELLULAR_FAST` | Celular com ≥ 2 Mbps downstream (API 29+) ou 4G/HSPAP (legado). |
+| `CELLULAR_SLOW` | Celular com < 2 Mbps ou 3G/2G. |
+| `OFFLINE` | Sem rede ativa. |
+
+É consultado a cada troca de item (`setCurrentPreloadIndex`) — chamada barata ao OS, sem tráfego.
+
+#### `DeviceCapabilityTier.kt` — Tier por RAM
+
+Avalia uma vez na inicialização do engine:
+
+| Tier | Critério | `maxPreloadDistance` |
+|---|---|---|
+| `LOW` | `memInfo.lowMemory == true` | 1 |
+| `MID` | `totalMem < 2 GB` | 2 |
+| `HIGH` | `totalMem ≥ 2 GB` | sem cap |
+
+> 💡 **Por que cap por RAM?** Cada item preloadado mantém buffers em memória. Em um celular de 1 GB, manter +4 itens prontos pode causar OOM. O cap converte uma decisão de UX (preload agressivo) em uma decisão segura por device.
+
+#### `BandwidthAdvisor.kt` — Tunagem do buffer
+
+Lê `DefaultBandwidthMeter.bitrateEstimate` e **reduz** o `BufferConfig` em redes lentas, **nunca aumenta**:
+
+| Bandwidth | `bufferForPlaybackMs` | `bufferForPlaybackAfterRebufferMs` | `maxBufferMs` |
+|---|---|---|---|
+| ≤ 0 ou < 500 kbps | min(base, 1 000) | min(base, 2 000) | min(base, 15 s) |
+| 500 kbps – 2 Mbps | min(base, 1 500) | min(base, 3 000) | min(base, 25 s) |
+| > 2 Mbps | base intacto | base intacto | base intacto |
+
+> 💡 **Por que `base` é teto?** O `ReelsBufferConfig` define `bufferForPlaybackMs = 800` para fast-start no estilo TikTok. Se o advisor *aumentasse* esse valor em redes boas, perderíamos a intenção do chamador. Como `min(base, X)` só baixa, o fast-start é preservado.
+
+#### `AdaptivePreloadStatusControl.kt` — A política
+
+Implementa `TargetPreloadStatusControl<Int, DefaultPreloadManager.PreloadStatus>` do Media3, retornando para cada índice **o quanto preloadar**:
+
+```kotlin
+class AdaptivePreloadStatusControl : TargetPreloadStatusControl<Int, DefaultPreloadManager.PreloadStatus> {
+
+    @Volatile var currentPlayingIndex: Int = 0
+    @Volatile var policy: PreloadPolicy = PreloadPolicy.WIFI
+    @Volatile var deviceMaxDistance: Int = Int.MAX_VALUE
+    @Volatile var forcedIndices: Set<Int> = emptySet()  // bypass de distance via requestPreloadAt
+
+    override fun getTargetPreloadStatus(rankingData: Int): DefaultPreloadManager.PreloadStatus {
+        if (rankingData in forcedIndices) return PreloadStatus.specifiedRangeLoaded(3_000L)
+        val distance = abs(rankingData - currentPlayingIndex)
+        if (distance == 0) return PreloadStatus.PRELOAD_STATUS_NOT_PRELOADED
+        val effectiveMax = minOf(policy.maxPreloadDistance, deviceMaxDistance)
+        if (distance > effectiveMax) return PreloadStatus.PRELOAD_STATUS_NOT_PRELOADED
+        return when (distance) {
+            1 -> if (policy.distance1Ms > 0) PreloadStatus.specifiedRangeLoaded(policy.distance1Ms)
+                 else PreloadStatus.PRELOAD_STATUS_TRACKS_SELECTED
+            2 -> if (policy.distance2Ms > 0) PreloadStatus.specifiedRangeLoaded(policy.distance2Ms)
+                 else PreloadStatus.PRELOAD_STATUS_TRACKS_SELECTED
+            else -> PreloadStatus.PRELOAD_STATUS_SOURCE_PREPARED
+        }
+    }
+}
+
+data class PreloadPolicy(val distance1Ms: Long, val distance2Ms: Long, val maxPreloadDistance: Int) {
+    companion object {
+        val WIFI          = PreloadPolicy(5_000L, 2_000L, 4)
+        val CELLULAR_FAST = PreloadPolicy(3_000L, 0L, 2)
+        val CELLULAR_SLOW = PreloadPolicy(0L, 0L, 1)
+        val OFFLINE       = PreloadPolicy(0L, 0L, 0)
+    }
+}
+```
+
+Significado dos níveis de Media3:
+- `specifiedRangeLoaded(ms)` → baixa N ms de segmentos para o cache.
+- `PRELOAD_STATUS_TRACKS_SELECTED` → escolhe a rendition ABR (sem baixar vídeo).
+- `PRELOAD_STATUS_SOURCE_PREPARED` → só busca o manifesto.
+- `PRELOAD_STATUS_NOT_PRELOADED` → item ignorado.
+
+> 💡 **Por que `@Volatile`?** O `DefaultPreloadManager` chama `getTargetPreloadStatus` em thread de mídia. O UI thread atualiza `currentPlayingIndex` e `policy`. `@Volatile` impede que a thread de mídia veja valores em cache da CPU.
+
+> 💡 **Por que `forcedIndices`?** Caso de uso: "o usuário acabou de tocar no card #15 — preload já!" mesmo que ele esteja a distância 10. `requestPreloadAt(15)` adiciona ao set; quando o preload completa (`onCompleted`), o índice é removido do set.
+
+---
+
+### 7.7 🧠 `PlayerViewModel.kt` — O Cérebro MVI
+
+Estado:
+
+```kotlin
+data class PlayerUiState(
+    val isBuffering: Boolean = false,
+    val isPlaying: Boolean = false,
+    val currentPositionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val errorMessage: String? = null,
+    val currentIndex: Int = 0,
+    val totalItems: Int = 0,
+    val isPrefetchEnabled: Boolean = false,        // true se está no caminho de preload
+    val preloadedIndices: Set<Int> = emptySet()    // índices que terminaram preload
+)
+```
+
+Intents e efeitos:
+
+```kotlin
+sealed class PlayerIntent {
+    object TogglePlayPause : PlayerIntent()
+    data class SeekTo(val positionMs: Long) : PlayerIntent()
+    data class LoadMediaList(val config: PlayerConfig) : PlayerIntent()
+    data class PlayItemAt(val index: Int) : PlayerIntent()
+    object NextItem : PlayerIntent()
+    object PreviousItem : PlayerIntent()
+    object RetryLast : PlayerIntent()
+}
+
+sealed class PlayerEffect {
+    data class ShowErrorToast(val message: String) : PlayerEffect()
+    object OnPlaylistEnded : PlayerEffect()
+}
+```
+
+A decisão central — qual caminho usar:
+
+```kotlin
+private fun loadMediaList(config: PlayerConfig) {
+    prefetchEnabled = config.mediaList.size > 1 && !config.forcePlaylistMode
+    loadedMediaConfigs = config.mediaList
+    _uiState.value = _uiState.value.copy(
+        errorMessage = null,
+        isPrefetchEnabled = prefetchEnabled,
+        preloadedIndices = emptySet()
     )
-)
 
-// Exibe o player na tela (padrão: aspectRatioMode = null → só preenche o host com Fit)
-VideoPlayerScreen(viewModel = viewModel)
+    if (prefetchEnabled) {
+        engine.registerForPreload(config.mediaList)
+        playItemAt(0)                              // dispara o primeiro item via preload manager
+    } else {
+        engine.loadDirect(config.mediaList, config.cacheConfig)   // playlist no ExoPlayer
+    }
+    _uiState.value = _uiState.value.copy(totalItems = config.mediaList.size)
+}
+```
 
-// Ou com aspect ratio fixo 16:9
-VideoPlayerScreen(
-    viewModel = viewModel,
-    aspectRatioMode = AspectRatioMode.RATIO_16_9
-)
+E a troca de item, sensível ao caminho ativo:
 
-// Ou com zoom/recorte (sem barras, sem distorção)
-VideoPlayerScreen(
-    viewModel = viewModel,
-    aspectRatioMode = AspectRatioMode.Crop
-)
+```kotlin
+is PlayerIntent.PlayItemAt -> {
+    if (prefetchEnabled) {
+        if (intent.index != currentPlayingIndex) playItemAt(intent.index)  // setMediaSource + prepare
+    } else {
+        engine.seekToItem(intent.index, 0L)                                // seekTo(index, 0)
+    }
+}
+```
 
-// Dentro de um container que já tem forma definida (ex.: card 16:9 no feed):
-// passe null para o player apenas preencher, sem reaplicar proporção.
-VideoPlayerScreen(
-    viewModel = viewModel,
-    aspectRatioMode = null,
-    pauseOnDispose = false // no feed, não pausar ao trocar de card
+#### StateFlow vs SharedFlow — Quando usar cada um
+
+| | `StateFlow` (`uiState`) | `SharedFlow` (`effects`) |
+|---|---|---|
+| Tem valor atual? | Sim — quem se inscreve recebe o último imediatamente. | Não — só recebe o que for emitido a partir da inscrição. |
+| Recompose dispara de novo? | OK: a UI lê o estado e desenha. | Não: evento já consumido não repete. |
+| Bom para | Posição do vídeo, isPlaying, isBuffering, currentIndex... | "Playlist terminou", "Mostra toast de erro X". |
+
+Se "playlist terminou" fosse `StateFlow`, ao rotacionar a tela ele dispararia de novo — o app avançaria para outro vídeo sem o usuário pedir. Bug clássico evitado pela escolha certa de `Flow`.
+
+#### Polling de posição
+
+A posição não tem callback contínuo no ExoPlayer (`onPositionDiscontinuity` só dispara em seeks/transitions). Para a barra de progresso atualizar suavemente:
+
+```kotlin
+private fun startPositionUpdates() = viewModelScope.launch {
+    while (true) {
+        if (engine.isPlaying) {
+            _uiState.value = _uiState.value.copy(
+                currentPositionMs = engine.currentPosition,
+                durationMs = engine.duration.coerceAtLeast(0L)
+            )
+        }
+        delay(500L)
+    }
+}
+```
+
+> 💡 **Por que 500 ms?** Trade-off: a 16 ms (60 fps) seria desperdício de CPU para atualizar um slider; a 1 s o avanço fica "saltado". 500 ms é o sweet-spot usado em muitos apps de vídeo.
+
+---
+
+### 7.8 🖥️ `VideoPlayerScreen.kt` — UI do Player
+
+```kotlin
+@Composable
+fun VideoPlayerScreen(
+    viewModel: PlayerViewModel = viewModel(),
+    pauseOnDispose: Boolean = true,
+    controlsContent: (@Composable (PlayerUiState, Player, (PlayerIntent) -> Unit) -> Unit)? = null
 )
 ```
 
-### Reagindo ao Fim do Vídeo
+Estrutura interna:
+
+```
+Box (fillMaxSize, fundo preto, clique alterna controles)
+  ├─ ContentFrame (fillMaxSize, ContentScale.Fit) ← renderiza o vídeo
+  ├─ LinearProgressIndicator no topo (se isBuffering)
+  └─ AnimatedVisibility (controles spring slide+fade)
+       └─ PlayerGradientOverlay + DefaultControls (chip de playlist, slider, prev/play/next)
+```
+
+**Auto-hide de 3 s** dos controles enquanto está tocando; toque no Box reaparece + reset do timer; `STATE_BUFFERING` força mostrar (sinal de que algo travou).
+
+**Modo paisagem imersivo**: detecta `Configuration.ORIENTATION_LANDSCAPE` e esconde as barras de sistema via `WindowInsetsControllerCompat`.
+
+#### `pauseOnDispose` — pausar (ou não) ao sair
+
+- **`true` (default — MainScreen):** sair = pausar (`DisposableEffect { onDispose { player.pause() } }`).
+- **`false` (Feed):** ao rolar de card, o VM já carrega o novo item — pausar no card antigo cancelaria o autoplay.
+
+#### Composable customizado para `controlsContent`
+
+Por padrão, `controlsContent = null` usa `DefaultControls` (slider M3 + botões). Mas você pode passar seu próprio UI:
 
 ```kotlin
-// Dentro de um Composable
-LaunchedEffect(Unit) {
-    viewModel.effects.collect { effect ->
-        when (effect) {
-            is PlayerEffect.OnPlaylistEnded -> {
-                // Vídeo acabou! Aqui você pode:
-                // - Mostrar sugestões de outros vídeos
-                // - Voltar para a tela anterior
-                // - Iniciar o próximo vídeo automaticamente
-                println("Todos os vídeos acabaram!")
-            }
-            is PlayerEffect.ShowErrorToast -> {
-                // Erro ao carregar. Mostre para o usuário.
-                snackbarHostState.showSnackbar(effect.message)
-            }
+VideoPlayerScreen(
+    viewModel = vm,
+    controlsContent = { state, player, intent ->
+        MyMinimalControls(isPlaying = state.isPlaying, onPlayPause = { intent(PlayerIntent.TogglePlayPause) })
+    }
+)
+```
+
+---
+
+### 7.9 📜 `VideoFeedScreen.kt` — Feed de Cards
+
+```kotlin
+@Composable
+fun VideoFeedScreen(viewModel: PlayerViewModel = playerViewModel()) {
+    val uiState by viewModel.uiState.collectAsState()
+    val listState = rememberLazyListState()
+    val feedItems = VideoFeedMock.items
+
+    LaunchedEffect(Unit) {
+        // 30 itens → prefetchEnabled (size > 1 e forcePlaylistMode = false default)
+        viewModel.handleIntent(PlayerIntent.LoadMediaList(
+            PlayerConfig(mediaList = feedItems.map { it.config })
+        ))
+    }
+
+    LaunchedMostVisible(listState) { index ->
+        viewModel.handleIntent(PlayerIntent.PlayItemAt(index))
+    }
+
+    LazyColumn(state = listState, ...) {
+        items(feedItems, key = { it.position }) { item ->
+            VideoFeedCard(
+                position = item.position,
+                isActive = (item.position - 1) == uiState.currentIndex,
+                viewModel = viewModel
+            )
         }
     }
 }
 ```
 
-### Carregando uma Playlist
+**O detector "card mais visível"** mede a área visível de cada item e debounce'a por 250 ms (`collectLatest + delay`) — durante um fling não vale a pena trocar o vídeo a cada item que passa, só quando o usuário "assenta".
 
 ```kotlin
-viewModel.handleIntent(
-    PlayerIntent.LoadMediaList(
-        PlayerConfig(
-            mediaList = listOf(
-                MediaItemConfig(url = "https://exemplo.com/video1.m3u8"),
-                MediaItemConfig(url = "https://exemplo.com/video2.m3u8"),
-                MediaItemConfig(url = "https://exemplo.com/video3.mpd", format = MediaFormat.DASH)
-            ),
-            cacheConfig = CacheConfig(maxBytes = 500L * 1024L * 1024L) // 500 MB de cache
-        )
+snapshotFlow {
+    val info = listState.layoutInfo
+    info.visibleItemsInfo.maxByOrNull { item ->
+        val visibleStart = maxOf(item.offset, info.viewportStartOffset)
+        val visibleEnd = minOf(item.offset + item.size, info.viewportEndOffset)
+        (visibleEnd - visibleStart).coerceAtLeast(0)
+    }?.index
+}.map { it ?: 0 }.distinctUntilChanged().collectLatest { index ->
+    delay(250L)            // debounce
+    onMostVisible(index)
+}
+```
+
+> 💡 **Por que `collectLatest`?** Ele cancela o `delay` anterior se o índice mudar antes dos 250 ms — só o último valor sobrevive. `collect` simples enfileiraria todas as transições.
+
+O `VideoFeedCard` mantém uma altura fixa de 220 dp para o `Box` que hospeda o player (`VideoPlayerScreen(pauseOnDispose = false)`). Cards inativos mostram um ícone play em vez do player — assim só **um** ExoPlayer está renderizando por vez.
+
+---
+
+### 7.10 📱 `ReelsScreen.kt` — Reels com Continuidade Instantânea
+
+Esta é a tela onde o cuidado com latência é máximo.
+
+```kotlin
+private val ReelsBufferConfig = BufferConfig(
+    minBufferMs = 3_000,                       // libera banda para os vizinhos avançarem
+    maxBufferMs = 20_000,                      // não inflar em 50 s no item atual
+    bufferForPlaybackMs = 800,                 // fast-start (TikTok-style)
+    bufferForPlaybackAfterRebufferMs = 2_000
+)
+
+@Composable
+fun ReelsScreen(viewModel: PlayerViewModel = playerViewModel(bufferConfig = ReelsBufferConfig)) {
+    val uiState by viewModel.uiState.collectAsState()
+    val items = VideoFeedMock.items
+    val pagerState = rememberPagerState(pageCount = { items.size })
+
+    // ① forcePlaylistMode = true → rota loadDirect + seekToItem (sem setMediaSource + prepare por swipe).
+    LaunchedEffect(Unit) {
+        viewModel.handleIntent(PlayerIntent.LoadMediaList(
+            PlayerConfig(mediaList = items.map { it.config }, forcePlaylistMode = true)
+        ))
+    }
+
+    // ② Portrait travado + imersivo apenas enquanto esta tela está visível.
+    DisposableEffect(Unit) {
+        val previousOrientation = activity.requestedOrientation
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose { activity.requestedOrientation = previousOrientation; controller.show(...) }
+    }
+
+    // ③ Autoplay no targetPage (durante a animação do swipe, antes de assentar).
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.targetPage }.distinctUntilChanged().collect { page ->
+            viewModel.handleIntent(PlayerIntent.PlayItemAt(page))   // → seekToItem(page, 0L)
+        }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        ContentFrame(player = viewModel.getPlayer(), modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+
+        // ④ Graça de 300 ms: microblips de STATE_BUFFERING por seekToItem se cancelam.
+        var showSpinner by remember { mutableStateOf(false) }
+        LaunchedEffect(uiState.isBuffering) {
+            if (!uiState.isBuffering) showSpinner = false
+            else { delay(300); showSpinner = true }
+        }
+        if (showSpinner) CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+
+        // ⑤ VerticalPager TRANSPARENTE por cima — capta swipe e toque, não hospeda vídeo.
+        VerticalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            Box(Modifier.fillMaxSize().clickable(noindication) {
+                viewModel.handleIntent(PlayerIntent.TogglePlayPause)
+            })
+        }
+    }
+}
+```
+
+**Cinco decisões que importam:**
+
+1. **`forcePlaylistMode = true`** — usa `loadDirect` + `seekToItem`. Em playlist mode, trocar item **não** chama `setMediaSource + prepare()`; é só mudar o índice corrente do ExoPlayer, que continua tocando do mesmo pipeline. Resultado: zero tear-down por swipe.
+
+2. **`ExoPlayer.setPreloadConfiguration(5_000_000L)`** (configurado uma vez no `ExoPlayerEngine.init`) — em playlist mode, o ExoPlayer mantém os próximos itens da playlist com até 5 s pré-bufferizados.
+
+3. **Buffer fast-start (`bufferForPlaybackMs = 800`)** — começa a tocar com 800 ms de vídeo. Combinado com 1 e 2, swipes saudáveis transitam sem rebuffer.
+
+4. **Graça de 300 ms no spinner** — `seekToItem` ainda pode emitir `STATE_BUFFERING` por dezenas de ms até o primeiro frame. Se sumir antes de 300 ms, `LaunchedEffect` cancela o `delay` e o spinner nunca aparece. Em rede genuinamente lenta, ele aparece após a graça.
+
+5. **`VerticalPager` transparente por cima de um `ContentFrame` fixo** — uma única `Surface` para o vídeo, que não se move entre composables ao deslizar. O pager existe só para capturar gesto e definir `currentPage`.
+
+> 📖 **Mais detalhes**: `docs/video-preload-cache.md` contém a spec original do sistema adaptativo.
+
+---
+
+### 7.11 🧭 Navigation 3 — A Cola Entre as 3 Telas
+
+`MainActivity.kt` configura um `NavDisplay` (do Jetpack Navigation 3) com três entradas serializáveis:
+
+```kotlin
+@Serializable private data object MainRoute  : NavKey
+@Serializable private data object FeedRoute  : NavKey
+@Serializable private data object ReelsRoute : NavKey
+
+NavDisplay(
+    backStack = backStack,
+    onBack = { backStack.removeLastOrNull() },
+    entryDecorators = listOf(
+        rememberSaveableStateHolderNavEntryDecorator(),
+        rememberViewModelStoreNavEntryDecorator()   // ← um ViewModelStore por NavEntry
+    ),
+    entryProvider = entryProvider {
+        entry<MainRoute>  { MainScreen(onOpenFeed = { backStack.add(FeedRoute) }, onOpenReels = { backStack.add(ReelsRoute) }) }
+        entry<FeedRoute>  { VideoFeedScreen() }
+        entry<ReelsRoute> { ReelsScreen() }
+    }
+)
+```
+
+> 💡 **Por que `rememberViewModelStoreNavEntryDecorator()`?** Sem ele, o `viewModel()` do Compose escopa ao `LocalViewModelStoreOwner` da Activity inteira — todas as telas compartilhariam o **mesmo** `PlayerViewModel` (e portanto o mesmo `ExoPlayer`). Com o decorator, cada `NavEntry` tem seu próprio `ViewModelStore`: ao entrar no Feed, um VM novo nasce; ao voltar, ele é liberado (`onCleared()` chama `engine.release()`, que libera o ExoPlayer).
+
+E `util/ViewModelExt.kt` traz o helper `playerViewModel()` que cria o VM no escopo do `NavEntry` atual passando a `Application` pela `PlayerViewModelFactory`:
+
+```kotlin
+@Composable
+fun playerViewModel(bufferConfig: BufferConfig = BufferConfig()): PlayerViewModel {
+    val app = LocalContext.current.applicationContext as Application
+    val owner = LocalViewModelStoreOwner.current
+    val base = (owner as? HasDefaultViewModelProviderFactory)
+        ?.defaultViewModelCreationExtras ?: CreationExtras.Empty
+    val extras = MutableCreationExtras(base)
+    return viewModel(factory = PlayerViewModelFactory(app, bufferConfig), extras = extras)
+}
+```
+
+---
+
+## 🧪 Testes Unitários (27 casos em JVM puro)
+
+Graças à camada `PlayerEngine`, o VM é testado **sem emulador**:
+
+| Arquivo | Papel |
+|---|---|
+| `FakePlayerEngine.kt` | Implementa `PlayerEngine` em Kotlin puro. Grava chamadas (`loadDirectCalls`, `registerForPreloadCalls`, `playPreloadedAtCalls`, `seekToItemCalls`, ...) e expõe `simulate...()` para disparar eventos como se viessem do ExoPlayer. |
+| `MainDispatcherRule.kt` | Substitui `Dispatchers.Main` por `TestDispatcher` — o `viewModelScope` usa Main, então sem essa regra o `runTest` quebra. |
+| `PlayerViewModelTest.kt` | 27 testes: carga (1 item vs multi-item), navegação na playlist, retry, prefetch on/off, propagação de `preloadedIndices`, reset entre cargas, etc. |
+
+Exemplos reais do `PlayerViewModelTest.kt`:
+
+```kotlin
+@Test
+fun `LoadMediaList com 1 item chama loadDirect e atualiza totalItems`() = runTest {
+    val config = PlayerConfig(mediaList = listOf(singleItem))
+    viewModel.handleIntent(PlayerIntent.LoadMediaList(config))
+    advanceUntilIdle()
+    assertEquals(1, fakeEngine.loadDirectCalls.size)
+    assertEquals(1, viewModel.uiState.value.totalItems)
+}
+
+@Test
+fun `LoadMediaList com multiplos itens define isPrefetchEnabled true`() = runTest {
+    viewModel.handleIntent(PlayerIntent.LoadMediaList(PlayerConfig(mediaList = multiItems)))
+    advanceUntilIdle()
+    assertTrue(viewModel.uiState.value.isPrefetchEnabled)
+}
+
+@Test
+fun `onPreloadCompleted adiciona indice a preloadedIndices`() = runTest {
+    viewModel.handleIntent(PlayerIntent.LoadMediaList(PlayerConfig(mediaList = multiItems)))
+    advanceUntilIdle()
+    fakeEngine.simulatePreloadCompleted(1)
+    assertTrue(1 in viewModel.uiState.value.preloadedIndices)
+}
+```
+
+**Como rodar:**
+
+```bash
+./gradlew test               # todos os unit tests
+./gradlew testDebugUnitTest  # variante debug
+```
+
+Ou no Android Studio: clique direito em `app/src/test` → `Run Tests`.
+
+> 📦 **Dependências de teste:** `kotlinx-coroutines-test` (para `runTest`, `advanceUntilIdle`) e `androidx-lifecycle-viewmodel-compose`.
+
+---
+
+## 🔄 Os Dois Fluxos Completos
+
+### Fluxo A — Caminho prefetch (Feed / MainScreen com 2+ itens)
+
+```
+1. MainScreen ou VideoFeedScreen: viewModel.handleIntent(LoadMediaList(playerConfig))
+2. PlayerViewModel.loadMediaList:
+     prefetchEnabled = mediaList.size > 1 && !forcePlaylistMode  → true
+     engine.registerForPreload(items)
+     playItemAt(0)
+3. ExoPlayerEngine.registerForPreload:
+     preloadManager.reset()
+     items.forEachIndexed { i, item -> preloadManager.add(item.toMediaItem(mediaId = i.toString()), i) }
+     preloadManager.invalidate()
+     → DefaultPreloadManager pergunta a AdaptivePreloadStatusControl o quanto preloadar cada índice
+     → policy.distance1Ms = 5_000 (Wi-Fi) → baixa 5 s do índice 1 no SimpleCache
+4. PlayerViewModel.playItemAt(0):
+     engine.playPreloadedItemAt(0, item, cacheConfig)
+       → source = preloadManager.getMediaSource(item) (já preparado)
+       → exoPlayer.setMediaSource(source); prepare()
+     engine.setCurrentPreloadIndex(0)   // dispara reavaliação dos preloads
+5. ExoPlayer dispara onPlaybackStateChanged → uiState.isBuffering toggla
+6. Vídeo aparece. PreloadManager.onCompleted(item1) → uiState.preloadedIndices += 1
+7. Usuário rola → LaunchedMostVisible(250 ms debounce) → handleIntent(PlayItemAt(2))
+8. PlayerViewModel: prefetchEnabled = true → playItemAt(2)
+9. (Volta a 4 com index = 2)
+```
+
+### Fluxo B — Caminho playlist (Reels)
+
+```
+1. ReelsScreen: handleIntent(LoadMediaList(PlayerConfig(items, forcePlaylistMode = true)))
+2. PlayerViewModel.loadMediaList:
+     prefetchEnabled = false
+     engine.loadDirect(items, cacheConfig)
+3. ExoPlayerEngine.loadDirect:
+     items.forEach { exoPlayer.addMediaSource(MediaSourceBuilder.build(...)) }
+     exoPlayer.prepare()                       // UMA vez na vida da tela
+     ExoPlayer.setPreloadConfiguration(5_000_000L) já foi feito no init →
+       Media3 começa a pré-bufferizar o item 1 enquanto o 0 toca.
+4. Usuário dá swipe vertical:
+     pagerState.targetPage muda durante a animação
+     → handleIntent(PlayItemAt(target))
+     → engine.seekToItem(target, 0L)
+     → exoPlayer.seekTo(target, 0)             // SEM tear-down do pipeline
+5. Item 1 já estava com 5 s prontos → primeiro frame imediato.
+   Se houve brief STATE_BUFFERING: graça de 300 ms suprime o spinner.
+6. ExoPlayer começa preload do item 2 (vizinho do novo currentItem).
+```
+
+---
+
+## 📖 Glossário
+
+### ExoPlayer / Media3
+Biblioteca oficial de reprodução de vídeo do Android (Media3 1.10.1 aqui). Cuida de baixar, decodificar e sincronizar áudio/vídeo.
+
+### HLS / DASH
+Formatos profissionais de streaming. HLS (Apple, `.m3u8`) e DASH (MPEG, `.mpd`). Ambos dividem o vídeo em segmentos pequenos e oferecem múltiplas renditions (qualidades). O **ABR** (Adaptive Bitrate) escolhe a rendition pela banda medida.
+
+### MVI
+Padrão **uniderecional**: View → Intent → ViewModel → State → View. Um único `State` imutável evita "dessincronização" entre variáveis.
+
+### StateFlow / SharedFlow
+`StateFlow` é um `Flow` com valor atual — perfeito para estado de UI. `SharedFlow` não tem valor atual — perfeito para eventos pontuais (toast, navegação).
+
+### Singleton
+Classe com **uma única instância** no processo. Em Kotlin: `object`. Usamos no `CacheManager` (SimpleCache trava o diretório → não pode ter duas instâncias).
+
+### Jetpack Compose
+UI declarativa em Kotlin. `@Composable` + recomposição automática quando o estado muda.
+
+### Navigation 3
+Sistema de navegação do Jetpack baseado em `NavKey` serializável + `NavDisplay`. Diferente do Navigation Compose 2.x: aqui o backstack é uma lista que você manipula diretamente (`backStack.add(...)`), e cada entrada pode ter um `ViewModelStore` próprio via decorator.
+
+### DisposableEffect / LaunchedEffect
+Efeitos colaterais em Compose. `LaunchedEffect(key)` roda uma corrotina enquanto o composable está vivo e a chave não muda. `DisposableEffect` adiciona um `onDispose { ... }` para limpeza.
+
+### PlayerEngine
+Interface que abstrai `ExoPlayer` + `DefaultPreloadManager`. Permite o `PlayerViewModel` ser testado em JVM puro com um `FakePlayerEngine`.
+
+### DefaultPreloadManager
+Componente do Media3 que pré-bufferiza fontes de mídia em uma queue de itens. Cada item passa por um `TargetPreloadStatusControl` que decide o nível de preload (faixas selecionadas / N ms baixados / nada).
+
+### Preload "interno da playlist" (`ExoPlayer.setPreloadConfiguration`)
+Mecanismo separado do `DefaultPreloadManager`. Atua sobre os itens **dentro de uma playlist do próprio ExoPlayer** (`addMediaSource`/`setMediaSources`), pré-bufferizando o próximo item. Usado no caminho playlist (Reels).
+
+### ContentScale (Compose)
+Como o `ContentFrame` do Media3 ajusta o vídeo dentro do seu container: `Fit` (preserva proporção, pode letterboxar), `FillBounds` (estica), `Crop` (zoom + corta), `Inside` (Fit sem ampliar). O app usa **`Fit` em todos os lugares**.
+
+### LRU (Least Recently Used)
+Política de cache: descarta primeiro o que foi acessado há mais tempo.
+
+### ABR (Adaptive Bitrate)
+Algoritmo que troca a rendition (qualidade) em tempo real conforme a banda muda. Por padrão, ExoPlayer começa em uma rendition baixa e sobe.
+
+---
+
+## ♻️ Como Reusar em Outro Projeto
+
+### Carregar um vídeo único
+
+```kotlin
+val vm: PlayerViewModel = playerViewModel()
+
+vm.handleIntent(PlayerIntent.LoadMediaList(
+    PlayerConfig(mediaList = listOf(
+        MediaItemConfig(url = "https://exemplo.com/video.m3u8", format = MediaFormat.HLS)
+    ))
+))
+
+VideoPlayerScreen(viewModel = vm)
+```
+
+### Carregar uma playlist com prefetch
+
+```kotlin
+vm.handleIntent(PlayerIntent.LoadMediaList(
+    PlayerConfig(
+        mediaList = listOf(
+            MediaItemConfig(url = "https://exemplo.com/v1.m3u8"),
+            MediaItemConfig(url = "https://exemplo.com/v2.m3u8"),
+            MediaItemConfig(url = "https://exemplo.com/v3.mpd", format = MediaFormat.DASH)
+        ),
+        cacheConfig = CacheConfig(maxBytes = 500L * 1024L * 1024L)  // 500 MB
     )
+))
+```
+
+### Carregar como playlist (modo Reels)
+
+```kotlin
+vm.handleIntent(PlayerIntent.LoadMediaList(
+    PlayerConfig(
+        mediaList = items,
+        forcePlaylistMode = true   // ← chave: vai por loadDirect + seekToItem
+    )
+))
+```
+
+### Reagir ao fim da playlist
+
+```kotlin
+LaunchedEffect(Unit) {
+    vm.effects.collect { effect ->
+        when (effect) {
+            is PlayerEffect.OnPlaylistEnded -> { /* navegar para outra tela, etc. */ }
+            is PlayerEffect.ShowErrorToast  -> snackbarHostState.showSnackbar(effect.message)
+        }
+    }
+}
+```
+
+### Reaproveitar no feed (sem pausar ao trocar de card)
+
+```kotlin
+VideoPlayerScreen(
+    viewModel = vm,
+    pauseOnDispose = false   // o VM já troca para o novo item; não cancelar o autoplay
 )
 ```
 
@@ -925,47 +1127,67 @@ viewModel.handleIntent(
 
 ## 💡 Decisões de Projeto — Por Que Foi Feito Assim?
 
-### Por que MVI e não MVVM?
+### Por que MVI e não MVVM com `LiveData`?
 
-**MVVM** (o padrão mais comum) usa `LiveData` e `ViewModel`, mas o estado pode vazar entre múltiplos `LiveData`. No **MVI**, tudo é um único `uiState`. Se a tela precisa de qualquer dado, ele está no `uiState`. Isso elimina a "dessincronização" entre variáveis (ex: `isLoading = true` mas `error != null` ao mesmo tempo, o que é contraditório).
+MVVM tradicional pulveriza o estado em múltiplos `LiveData` — `isLoading`, `error`, `currentVideo` — que podem ficar dessincronizados (`isLoading = true` **e** `error != null`, contradição). No MVI um único `PlayerUiState` imutável é a única fonte da verdade. Mudou? Só via `copy()`. Bug na UI? Olhe o `uiState`, ele tem tudo.
 
-### Por que o `PlayerViewModel` deixou de ser `AndroidViewModel`?
+### Por que o `PlayerViewModel` **não** é mais um `AndroidViewModel`?
 
-Antes, o `PlayerViewModel` era um `AndroidViewModel` para receber o `Application` (necessário ao `ExoPlayer` e ao `SimpleCache`). Agora quem precisa do `Application` é o **`ExoPlayerEngine`**, não o ViewModel.
+Antes, ele era um `AndroidViewModel` para receber a `Application` que o `ExoPlayer` e o `SimpleCache` exigem. Agora quem precisa do `Application` é o **`ExoPlayerEngine`** (injetado pela factory). O VM passou a ser um `ViewModel` comum, com **zero dependências de Android/Media3** — daí os 27 testes JUnit em JVM puro.
 
-Movendo o `Context` para o engine, o `PlayerViewModel` virou um `ViewModel` comum que só depende da interface `PlayerEngine` — **zero dependências de Android/Media3**, o que o torna testável em JVM puro. A injeção do `Application` no engine real acontece na `PlayerViewModelFactory` (usada pelo helper `playerViewModel()`); nos testes, passamos um `FakePlayerEngine` que não precisa de `Context` algum.
+### Por que dois caminhos de carga (prefetch vs playlist)?
 
-O `Application` context continua seguro de guardar (no engine, agora), pois dura o mesmo tempo que o app e não vaza como o `Activity` context.
+São otimizações para UX diferentes:
 
-### Por que `configChanges` no AndroidManifest?
+| | Prefetch (`DefaultPreloadManager`) | Playlist (`ExoPlayer.setMediaSources` + `seekTo`) |
+|---|---|---|
+| Troca de item | `setMediaSource + prepare()` → tear-down → flash de buffering | `seekToItem(n, 0)` → sem tear-down |
+| Ideal para | Carrossel de itens distintos (Feed) | Playback contínuo sequencial (Reels) |
+| Preload | `DefaultPreloadManager` + `AdaptivePreloadStatusControl` | `ExoPlayer.setPreloadConfiguration` (playlist-internal) |
+| Cache | Mesmo SimpleCache (factory injetado no PreloadManager) | Mesmo SimpleCache (factory no `MediaSourceBuilder.build`) |
 
-```xml
-<activity
-    android:name=".MainActivity"
-    android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout">
-```
+Os dois usam o **mesmo** `BandwidthMeter` singleton e o **mesmo** cache LRU, então não há trabalho duplicado mesmo trocando de modo.
 
-Sem isso, girar o celular **destrói e recria** a `Activity`. O Android mata o processo de vídeo, reinicia do zero e você ouve aquele "clique" chato de reinício de vídeo.
+### Por que `setPreloadConfiguration` é configurado **sempre** no `init`, mesmo no caminho prefetch?
 
-Com `configChanges`, a Activity **não é destruída** na rotação. O ViewModel (e o ExoPlayer dentro dele) sobrevivem. A UI só se reorganiza para o modo paisagem.
+`setPreloadConfiguration` só faz efeito quando há **playlist** no `ExoPlayer` (`addMediaSource` × N). No caminho prefetch, a gente chama `exoPlayer.setMediaSource(source)` (single source) — `setPreloadConfiguration` simplesmente não atua. Logo, configurar uma vez no init é seguro e elimina branching condicional.
 
-> ⚠️ **Isso não é para todos os casos!** `configChanges` funciona bem aqui porque o Compose e o ViewModel gerenciam estado corretamente. Em apps com XML+Fragments, pode causar bugs se você não souber o que está fazendo.
+### Por que `forcedIndices` no `AdaptivePreloadStatusControl`?
 
-### Por que o `SimpleCache` precisa ser Singleton?
+Caso real: você abriu o feed em uma posição salva (item 15 de 30). Sem `forcedIndices`, o preload manager via `distance = 15` → ignora. Com `requestPreloadAt(15)`, o índice entra em `forcedIndices` e recebe tratamento de "distância 1" temporariamente, até o `onCompleted` ser emitido e o índice sair do set.
 
-O `SimpleCache` usa um `DatabaseProvider` que **tranca o arquivo de banco de dados do cache**. Criar duas instâncias apontando para o mesmo diretório gera um `CacheDatabaseProvider` exception imediatamente. O Singleton garante que só um processo acessa o cofre por vez.
+### Por que cada `NavEntry` tem seu próprio `ViewModelStore`?
+
+Porque cada tela cria seu próprio `ExoPlayer`. Sem decorator dedicado, `playerViewModel()` reusaria o VM da Activity → mesmo `ExoPlayer` em três telas. Pior: ao fechar uma tela, o VM não seria liberado, vazando o player. Com o decorator, sair da tela (pop do backstack) chama `onCleared()` → `engine.release()` → `exoPlayer.release()`.
+
+### Por que `CacheManager.release()` no `onDestroy()` do `MainActivity`?
+
+`SimpleCache` mantém file lock no diretório de cache. Em produção isso quase nunca importa (o processo morre e tudo é limpo). Em desenvolvimento — instalações rápidas, hot reload — pode dar `Cache is already in use`. O `release()` no `isFinishing == true` libera explicitamente.
+
+### Por que `SCREEN_ORIENTATION_PORTRAIT` é escopado à tela de Reels?
+
+Travar a orientação no `AndroidManifest` afetaria as três telas. A MainScreen tem modo paisagem imersivo (queremos rotação livre). O Feed também deve rotacionar normalmente. Só o Reels precisa de portrait travado. `DisposableEffect` salva o valor anterior e restaura no `onDispose`, escopando a mudança ao ciclo de vida da tela.
+
+### Por que `bufferForPlaybackMs = 800` em Reels e `2_500` no resto?
+
+Reels precisa de fast-start. Esperar 2.5 s entre swipes seria insuportável. 800 ms é o limite onde o usuário ainda percebe como "instantâneo". Em compensação, se a rede pifar logo após começar, o rebuffer é mais frequente — daí o `bufferForPlaybackAfterRebufferMs = 2_000` (rebuffer mais conservador). Em telas onde o usuário escolheu o vídeo (Main, Feed), faz sentido um buffer maior e mais estável (2.5 s).
+
+### Por que não vamos no caminho prefetch para Reels (que pareceria simétrico)?
+
+Porque `playPreloadedItemAt` faz `setMediaSource + prepare()` por troca de item — **sempre** dispara `STATE_BUFFERING` no listener, **mesmo** quando a fonte está totalmente preloadada. O custo é da reinicialização do pipeline (renderers, track selection), não do download. O caminho playlist evita esse custo porque o pipeline é o mesmo entre itens.
 
 ---
 
-## 🏁 Próximos Passos para Aprender Mais
-
-Se você quer se aprofundar nos tópicos usados aqui, estes são os recursos oficiais:
+## 🏁 Próximos Passos
 
 - **Jetpack Compose:** [developer.android.com/jetpack/compose](https://developer.android.com/jetpack/compose)
 - **Media3 / ExoPlayer:** [developer.android.com/media/media3](https://developer.android.com/media/media3)
-- **Arquitetura Android (MVI/MVVM):** [developer.android.com/topic/architecture](https://developer.android.com/topic/architecture)
-- **Kotlin Flows (StateFlow/SharedFlow):** [kotlinlang.org/docs/flow.html](https://kotlinlang.org/docs/flow.html)
+- **Media3 PreloadManager (concepts):** [developer.android.com/media/media3/exoplayer/preloading-media/preloadmanager/concepts](https://developer.android.com/media/media3/exoplayer/preloading-media/preloadmanager/concepts)
+- **Arquitetura Android:** [developer.android.com/topic/architecture](https://developer.android.com/topic/architecture)
+- **Kotlin Flows:** [kotlinlang.org/docs/flow.html](https://kotlinlang.org/docs/flow.html)
+- **Navigation 3:** [developer.android.com/guide/navigation/navigation-3](https://developer.android.com/guide/navigation/navigation-3)
 - **Material Design 3:** [m3.material.io](https://m3.material.io)
+- **Spec interna deste projeto:** [`docs/video-preload-cache.md`](docs/video-preload-cache.md)
 
 ---
 

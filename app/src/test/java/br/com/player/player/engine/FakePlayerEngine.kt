@@ -96,4 +96,8 @@ class FakePlayerEngine : PlayerEngine {
         fakeCurrentMediaItemIndex = index
         eventListener?.onMediaItemIndexChanged(index)
     }
+
+    fun simulatePreloadCompleted(index: Int) {
+        eventListener?.onPreloadCompleted(index)
+    }
 }

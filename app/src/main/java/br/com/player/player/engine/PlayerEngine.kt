@@ -46,5 +46,8 @@ interface PlayerEngine {
     fun invalidatePreload()
     fun resetPreload()
 
+    /** Forces immediate preload of [index] regardless of its distance from the current item. */
+    fun requestPreloadAt(index: Int) = Unit
+
     fun release()
 }

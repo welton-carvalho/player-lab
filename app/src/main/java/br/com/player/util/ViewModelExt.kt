@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import br.com.player.player.BufferConfig
 import br.com.player.player.ui.PlayerViewModel
 import br.com.player.player.ui.PlayerViewModelFactory
 
@@ -41,11 +42,11 @@ inline fun <reified VM : ViewModel> appViewModel(): VM {
  * um AndroidViewModel e precisa de sua própria factory.
  */
 @Composable
-fun playerViewModel(): PlayerViewModel {
+fun playerViewModel(bufferConfig: BufferConfig = BufferConfig()): PlayerViewModel {
     val app = LocalContext.current.applicationContext as Application
     val owner = LocalViewModelStoreOwner.current
     val base = (owner as? HasDefaultViewModelProviderFactory)
         ?.defaultViewModelCreationExtras ?: CreationExtras.Empty
     val extras = MutableCreationExtras(base)
-    return viewModel(factory = PlayerViewModelFactory(app), extras = extras)
+    return viewModel(factory = PlayerViewModelFactory(app, bufferConfig), extras = extras)
 }

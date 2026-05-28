@@ -35,7 +35,9 @@ data class PlayerUiState(
     val durationMs: Long = 0L,
     val errorMessage: String? = null,
     val currentIndex: Int = 0,
-    val totalItems: Int = 0
+    val totalItems: Int = 0,
+    val isPrefetchEnabled: Boolean = false,
+    val preloadedIndices: Set<Int> = emptySet()
 )
 
 sealed class PlayerEffect {
@@ -91,6 +93,13 @@ class PlayerViewModel(
                     _uiState.value = _uiState.value.copy(currentIndex = index)
                 }
             }
+
+            override fun onPreloadCompleted(index: Int) {
+                _uiState.value = _uiState.value.copy(
+                    preloadedIndices = _uiState.value.preloadedIndices + index
+                )
+            }
+
         })
         startPositionUpdates()
     }
@@ -152,9 +161,13 @@ class PlayerViewModel(
     private fun loadMediaList(config: PlayerConfig) {
         viewModelScope.launch {
             try {
-                _uiState.value = _uiState.value.copy(errorMessage = null)
-                prefetchEnabled = config.mediaList.size > 1
+                prefetchEnabled = config.mediaList.size > 1 && !config.forcePlaylistMode
                 loadedMediaConfigs = config.mediaList
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = null,
+                    isPrefetchEnabled = prefetchEnabled,
+                    preloadedIndices = emptySet()
+                )
 
                 if (prefetchEnabled) {
                     engine.registerForPreload(config.mediaList)
