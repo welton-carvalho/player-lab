@@ -29,6 +29,7 @@ Este é um **app Android de reprodução de vídeo** (como um YouTube simplifica
 | **Material Design 3** | Sistema de design do Google (cores, tipografia, formas) |
 | **OkHttp** | Biblioteca para fazer requisições HTTP com mais controle |
 | **SimpleCache** | Salva partes do vídeo no celular para evitar re-baixar |
+| **JUnit 4 + kotlinx-coroutines-test** | Testes unitários JVM do `PlayerViewModel` (sem emulador) |
 
 ---
 
@@ -117,12 +118,29 @@ Player/
 │       │   │   │                           Converte URL + configurações em algo que o
 │       │   │   │                           ExoPlayer consegue reproduzir.
 │       │   │   │
+│       │   │   ├── engine/
+│       │   │   │   ├── PlayerEngine.kt        ← Interface que abstrai ExoPlayer + Preload.
+│       │   │   │   │                            O ViewModel só conhece esse contrato.
+│       │   │   │   ├── PlayerEventListener.kt ← Eventos do player sem tipos Android/Media3
+│       │   │   │   │                            (permite fakes em testes JVM puros).
+│       │   │   │   └── ExoPlayerEngine.kt     ← Implementação real com Media3/ExoPlayer.
+│       │   │   │
 │       │   │   └── ui/
-│       │   │       ├── PlayerViewModel.kt  ← O "cérebro" do player.
-│       │   │       │                         Toda a lógica de play/pause/erro fica aqui.
-│       │   │       │
-│       │   │       └── VideoPlayerScreen.kt ← A tela visual do player.
-│       │   │                                  Botões, barra de progresso, controles.
+│       │   │       ├── PlayerViewModel.kt        ← O "cérebro" do player.
+│       │   │       │                               Lógica de play/pause/erro; delega mídia
+│       │   │       │                               ao PlayerEngine (testável sem Android).
+│       │   │       ├── PlayerViewModelFactory.kt ← Cria o ViewModel injetando o
+│       │   │       │                               ExoPlayerEngine real.
+│       │   │       └── VideoPlayerScreen.kt      ← A tela visual do player.
+│       │   │                                       Botões, barra de progresso, controles.
+│       │   │
+│       │   ├── feed/
+│       │   │   ├── VideoFeedScreen.kt   ← Feed vertical de cards que reusa o player.
+│       │   │   └── VideoFeedMock.kt     ← Lista mock de vídeos do feed.
+│       │   │
+│       │   ├── util/
+│       │   │   └── ViewModelExt.kt      ← Helpers de Compose: playerViewModel() e
+│       │   │                              appViewModel() (injeção de Application).
 │       │   │
 │       │   └── ui/theme/
 │       │       ├── Color.kt             ← Paleta de cores do app (tema "Cinema")
@@ -131,6 +149,13 @@ Player/
 │       │
 │       ├── res/                         ← Recursos do Android (ícones, strings)
 │       └── AndroidManifest.xml          ← "Certidão de nascimento" do app para o Android
+│
+├── src/test/java/br/com/player/        ← Testes unitários JVM puros (sem emulador)
+│   ├── MainDispatcherRule.kt           ← Regra JUnit que troca Dispatchers.Main por um
+│   │                                     TestDispatcher (necessário para o viewModelScope).
+│   └── player/
+│       ├── engine/FakePlayerEngine.kt  ← Test double do PlayerEngine (Kotlin puro).
+│       └── ui/PlayerViewModelTest.kt   ← Testes do PlayerViewModel usando o fake.
 │
 ├── gradle/
 │   └── libs.versions.toml              ← Lista centralizada de versões das bibliotecas
@@ -195,14 +220,16 @@ graph TD
     end
 
     subgraph "Camada de Mídia (motor de vídeo)"
-        EP[ExoPlayer<br/>Toca o vídeo de fato]
+        ENG[PlayerEngine<br/>interface — desacopla o ViewModel]
+        EP[ExoPlayerEngine + ExoPlayer<br/>Toca o vídeo de fato]
         CM[CacheManager<br/>Salva dados localmente]
         MSB[MediaSourceBuilder<br/>Prepara a fonte de vídeo]
     end
 
     VPS -- "1. Usuário aperta botão → Intent" --> VM
-    VM -- "2. Comanda o player" --> EP
-    EP -- "3. Avisa mudanças (Listener)" --> VM
+    VM -- "2. Comanda via interface" --> ENG
+    ENG -- "implementado por" --> EP
+    EP -- "3. Avisa mudanças (PlayerEventListener)" --> VM
     VM -- "4. Atualiza o estado" --> State
     State -- "5. Tela redesenha" --> VPS
     VM -- "6. Emite evento de erro" --> Effects
@@ -360,6 +387,18 @@ Imagine dois garçons (threads) que trabalham juntos. O garçom A atualiza o ped
 
 Analogia: pense no ViewModel como o **gerente de uma loja**. Quando o turno muda (rotação = troca de turno), o gerente continua no cargo com todo o conhecimento. Os atendentes (Activities/Composables) podem mudar, mas o gerente lembra de tudo.
 
+#### O ViewModel não fala com o ExoPlayer diretamente — ele usa o `PlayerEngine`
+
+Em vez de manipular o `ExoPlayer` e o `DefaultPreloadManager` na mão, o `PlayerViewModel` depende apenas da interface **`PlayerEngine`**. Toda a "sujeira" do Media3 (criar fontes, preload, listeners) fica isolada na implementação `ExoPlayerEngine`.
+
+```kotlin
+class PlayerViewModel(
+    private val engine: PlayerEngine   // ← só conhece a interface, não o ExoPlayer
+) : ViewModel() { ... }
+```
+
+**Por que isso importa?** Porque o ViewModel deixa de ter qualquer dependência de Android ou Media3. Isso o torna testável em **JVM puro** (sem emulador), trocando o engine real por um fake. Veja as seções **7.6 `PlayerEngine`** e **🧪 Testes Unitários** abaixo.
+
 #### MVI no ViewModel: Intents, State e Effects
 
 ```kotlin
@@ -443,13 +482,14 @@ Analogia: é como preparar uma fila de restaurante. O próximo cliente (distânc
 
 ### 7.4 🖥️ `VideoPlayerScreen.kt` — A Interface Visual
 
-Este é o Composable que desenha a tela do player. Ele aceita um parâmetro `aspectRatioMode` para controlar como o vídeo é exibido:
+Este é o Composable que desenha a tela do player. Ele aceita um parâmetro `aspectRatioMode` **nullable** para controlar como o vídeo é exibido:
 
 ```kotlin
 @Composable
 fun VideoPlayerScreen(
     viewModel: PlayerViewModel = viewModel(),
-    aspectRatioMode: AspectRatioMode = AspectRatioMode.FillBounds, // padrão
+    aspectRatioMode: AspectRatioMode? = null, // null = não aplica proporção (só preenche o host)
+    pauseOnDispose: Boolean = true,           // pausar ao sair da composição?
     controlsContent: ... // UI de controles customizável
 )
 ```
@@ -459,10 +499,11 @@ Internamente, o modo escolhido é aplicado em duas camadas:
 ```kotlin
 // Camada 1: tamanho do container (Compose layout)
 val contentModifier = when (aspectRatioMode) {
-    is AspectRatioMode.FillBounds,
-    is AspectRatioMode.Crop,
-    is AspectRatioMode.Inside -> Modifier.fillMaxSize()
-    is AspectRatioMode.Fixed  -> Modifier.aspectRatio(aspectRatioMode.ratio)
+    is AspectRatioMode.FillBounds -> Modifier.fillMaxSize()
+    is AspectRatioMode.Crop       -> Modifier.fillMaxSize()
+    is AspectRatioMode.Inside     -> Modifier.fillMaxSize()
+    is AspectRatioMode.Fixed      -> Modifier.aspectRatio(aspectRatioMode.ratio)
+    null                          -> Modifier.fillMaxSize() // sem proporção própria
 }
 
 // Camada 2: renderização do vídeo (Media3 nativo — equivalente ao ResizeMode do PlayerView XML)
@@ -471,6 +512,7 @@ val contentScale = when (aspectRatioMode) {
     is AspectRatioMode.Crop       -> ContentScale.Crop
     is AspectRatioMode.Inside     -> ContentScale.Inside
     is AspectRatioMode.Fixed      -> ContentScale.Fit
+    null                          -> ContentScale.Fit
 }
 
 ContentFrame(player = player, modifier = contentModifier, contentScale = contentScale)
@@ -478,17 +520,26 @@ ContentFrame(player = player, modifier = contentModifier, contentScale = content
 
 O `Box` externo sempre tem `fillMaxSize()` e fundo preto — as barras pretas do letterbox/pillarbox aparecem naturalmente como o fundo.
 
+> 💡 **Quando usar `aspectRatioMode = null`?** Quando quem hospeda o player **já define a forma** do container. É o caso do **feed**: cada card já fixa um `Box` em 16:9, então reaplicar uma proporção dentro dele seria redundante. Passando `null`, o player apenas preenche o card com `ContentScale.Fit`. Na tela única (`MainActivity`), onde o usuário escolhe a proporção pelo dropdown, passamos um modo concreto.
+
+#### `pauseOnDispose` — pausar (ou não) ao sair da tela
+
+O player é reaproveitado em dois contextos com necessidades opostas, controladas por este parâmetro:
+
+- **Tela única (`true`, padrão):** sair da tela = pausar o vídeo (veja o `DisposableEffect` abaixo).
+- **Feed (`false`):** ao rolar de um card para outro, o `PlayerViewModel` já troca para o novo item. Pausar no `onDispose` do card antigo cancelaria esse autoplay.
+
 Vamos entender as demais partes importantes:
 
 #### DisposableEffect — Fechar a Torneira ao Sair
 
 ```kotlin
-DisposableEffect(Unit) {
+DisposableEffect(pauseOnDispose) {
     // Este bloco roda quando o Composable ENTRA na tela
 
     onDispose {
         // Este bloco roda quando o Composable SAI da tela
-        player.pause() // Para o vídeo para não tocar em background
+        if (pauseOnDispose) player.pause() // Para o vídeo para não tocar em background
     }
 }
 ```
@@ -532,6 +583,122 @@ Este arquivo pega a URL e as configurações e transforma em um objeto `MediaSou
 | DASH | `.mpd` | YouTube, Netflix |
 
 Ambos funcionam da mesma forma: o vídeo é dividido em pedaços pequenos (chunks), e o player baixa chunk por chunk, adaptando a qualidade conforme a velocidade da internet.
+
+---
+
+### 7.6 🔌 `PlayerEngine` — A Camada de Abstração do Player
+
+Esta é a peça que **desacopla o ViewModel do ExoPlayer**. Em vez de o ViewModel manipular o Media3 diretamente, ele conversa com uma interface neutra.
+
+**Por que separar?** Duas razões práticas:
+
+1. **Testabilidade.** O `ExoPlayer` precisa de um `Context` Android e de threads reais de mídia — impossível instanciar num teste JVM comum. Escondendo-o atrás de uma interface, conseguimos trocar por um *fake* nos testes.
+2. **Organização.** Toda a complexidade de preload, criação de fontes e listeners fica num único lugar (`ExoPlayerEngine`), não espalhada pelo ViewModel.
+
+```
+PlayerViewModel  ──►  PlayerEngine (interface)
+                          ▲          ▲
+                          │          │
+              ExoPlayerEngine    FakePlayerEngine
+              (produção, Media3)  (testes, Kotlin puro)
+```
+
+**Três arquivos compõem essa camada:**
+
+| Arquivo | Papel |
+|---|---|
+| `PlayerEngine.kt` | A **interface** (contrato): `play()`, `pause()`, `seekTo()`, `loadDirect()`, `registerForPreload()`, `playPreloadedItemAt()`, etc. |
+| `PlayerEventListener.kt` | Contrato de **eventos** (callbacks) sem nenhum tipo do Android/Media3 — `onIsPlayingChanged`, `onPlaybackStateChanged`, `onPositionChanged`, `onMediaItemIndexChanged`. |
+| `ExoPlayerEngine.kt` | A **implementação real**: cria o `ExoPlayer` + `DefaultPreloadManager`, traduz os `Player.Listener` do Media3 para o `PlayerEventListener` neutro. |
+
+```kotlin
+interface PlayerEngine {
+    /** Instância Media3 para o ContentFrame. Não usar em testes unitários do ViewModel. */
+    val player: Player
+
+    fun setEventListener(listener: PlayerEventListener)
+    fun clearEventListener()
+
+    val isPlaying: Boolean
+    val currentPosition: Long
+    // ...
+    fun play()
+    fun pause()
+    fun loadDirect(items: List<MediaItemConfig>, cacheConfig: CacheConfig)
+    fun registerForPreload(items: List<MediaItemConfig>)
+    fun playPreloadedItemAt(index: Int, config: MediaItemConfig, cacheConfig: CacheConfig)
+    fun release()
+}
+```
+
+> 💡 **A propriedade `player`** é a única que ainda expõe um tipo Media3 (`Player`), porque o `ContentFrame` da UI precisa dela. Nos testes do ViewModel essa propriedade nunca é tocada (o fake lança erro se alguém tentar usá-la).
+
+**Como o ViewModel é construído?** Como ele não é mais um `AndroidViewModel`, usamos uma factory que injeta o engine real:
+
+```kotlin
+// PlayerViewModelFactory.kt
+class PlayerViewModelFactory(private val app: Application, ...) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T =
+        PlayerViewModel(ExoPlayerEngine(app, bufferConfig)) as T
+}
+```
+
+E na UI, o helper `playerViewModel()` (em `util/ViewModelExt.kt`) cuida de obter o ViewModel com a factory correta, escopado ao `ViewModelStoreOwner` atual (compatível com Navigation 3):
+
+```kotlin
+@Composable
+fun MainScreen(viewModel: PlayerViewModel = playerViewModel()) { ... }
+```
+
+---
+
+## 🧪 Testes Unitários
+
+Graças à camada `PlayerEngine`, o `PlayerViewModel` é testado em **JVM puro** (`src/test/`) — roda em segundos, sem emulador.
+
+**As peças do setup de teste:**
+
+| Arquivo | Papel |
+|---|---|
+| `FakePlayerEngine.kt` | Implementação fake do `PlayerEngine` em Kotlin puro. Registra quais métodos foram chamados (ex.: `loadDirectCalls`, `playPreloadedAtCalls`) e expõe helpers `simulate...()` para disparar eventos como se viessem do ExoPlayer. |
+| `MainDispatcherRule.kt` | Regra JUnit que substitui `Dispatchers.Main` por um `TestDispatcher`. Sem ela, o `viewModelScope` (que usa `Dispatchers.Main`) quebraria em ambiente de teste. |
+| `PlayerViewModelTest.kt` | Os testes em si — verificam a lógica de carregamento, navegação na playlist, play/pause, seek, retry e a tradução de eventos do engine em `uiState`/`effects`. |
+
+**Exemplo de teste** — verifica que uma lista com 1 item usa `loadDirect` (carga direta), enquanto 2+ itens ativam o preload:
+
+```kotlin
+@Test
+fun `LoadMediaList com 1 item chama loadDirect e atualiza totalItems`() = runTest {
+    val config = PlayerConfig(mediaList = listOf(singleItem))
+
+    viewModel.handleIntent(PlayerIntent.LoadMediaList(config))
+    advanceUntilIdle()
+
+    assertEquals(1, fakeEngine.loadDirectCalls.size)
+    assertEquals(1, viewModel.uiState.value.totalItems)
+}
+```
+
+E os helpers `simulate...()` permitem testar a reação do ViewModel a eventos do player sem nenhum vídeo real:
+
+```kotlin
+@Test
+fun `onIsPlayingChanged atualiza isPlaying no uiState`() = runTest {
+    fakeEngine.simulateIsPlayingChanged(true)
+    assertTrue(viewModel.uiState.value.isPlaying)
+}
+```
+
+**Como rodar os testes:**
+
+```bash
+./gradlew test            # roda todos os testes unitários
+./gradlew testDebugUnitTest   # variante debug
+```
+
+Ou no Android Studio: clique direito na pasta `src/test` → `Run 'Tests in ...'`.
+
+> 📦 **Dependências de teste** (em `gradle/libs.versions.toml` + `app/build.gradle.kts`): `kotlinx-coroutines-test` (para `runTest`/`advanceUntilIdle`) e `androidx-lifecycle-viewmodel-compose`.
 
 ---
 
@@ -655,7 +822,10 @@ Framework moderno do Android para criar interfaces. Em vez de XML, você escreve
 Um efeito colateral em Compose que tem um **ciclo de vida**. O código dentro dele roda quando o Composable entra na tela, e o bloco `onDispose` roda quando o Composable sai da tela. Essencial para liberar recursos (player, sensores, listeners).
 
 ### AspectRatioMode
-Sealed class que define como o vídeo é dimensionado no player. Atua em duas camadas: `Modifier.aspectRatio()` (Compose) controla o tamanho do container, e `ContentScale` (Media3) controla a renderização do vídeo dentro do frame. Modos disponíveis: `FillBounds` (estica), `Crop` (zoom/recorte), `Inside` (fit sem ampliar), `Fixed(w, h)` (proporção fixa com letterbox/pillarbox).
+Sealed class que define como o vídeo é dimensionado no player. Atua em duas camadas: `Modifier.aspectRatio()` (Compose) controla o tamanho do container, e `ContentScale` (Media3) controla a renderização do vídeo dentro do frame. Modos disponíveis: `FillBounds` (estica), `Crop` (zoom/recorte), `Inside` (fit sem ampliar), `Fixed(w, h)` (proporção fixa com letterbox/pillarbox). O parâmetro no `VideoPlayerScreen` é **nullable**: `null` significa "não aplicar proporção" — o player apenas preenche o container do host (usado no feed, cujo card já tem forma 16:9).
+
+### PlayerEngine
+Interface que abstrai toda a interação com o `ExoPlayer` e o `DefaultPreloadManager`. O `PlayerViewModel` depende só dela, não do Media3 — o que permite testes JVM puros. Implementada por `ExoPlayerEngine` (produção) e `FakePlayerEngine` (testes). Os eventos do player chegam ao ViewModel via `PlayerEventListener`, um contrato de callbacks sem tipos do Android/Media3.
 
 ### ContentScale (Media3 / Compose)
 Interface do Compose usada pelo `ContentFrame` do Media3 para controlar o `ResizeMode` do ExoPlayer de forma declarativa. Equivalente ao `setResizeMode()` do `PlayerView` XML. Os valores mais usados: `Fit` (encaixa preservando proporção), `FillBounds` (estica para preencher), `Crop` (zoom para preencher sem distorção), `Inside` (encaixa sem ampliar além do original).
@@ -687,7 +857,7 @@ viewModel.handleIntent(
     )
 )
 
-// Exibe o player na tela (padrão: FillBounds)
+// Exibe o player na tela (padrão: aspectRatioMode = null → só preenche o host com Fit)
 VideoPlayerScreen(viewModel = viewModel)
 
 // Ou com aspect ratio fixo 16:9
@@ -700,6 +870,14 @@ VideoPlayerScreen(
 VideoPlayerScreen(
     viewModel = viewModel,
     aspectRatioMode = AspectRatioMode.Crop
+)
+
+// Dentro de um container que já tem forma definida (ex.: card 16:9 no feed):
+// passe null para o player apenas preencher, sem reaplicar proporção.
+VideoPlayerScreen(
+    viewModel = viewModel,
+    aspectRatioMode = null,
+    pauseOnDispose = false // no feed, não pausar ao trocar de card
 )
 ```
 
@@ -751,9 +929,13 @@ viewModel.handleIntent(
 
 **MVVM** (o padrão mais comum) usa `LiveData` e `ViewModel`, mas o estado pode vazar entre múltiplos `LiveData`. No **MVI**, tudo é um único `uiState`. Se a tela precisa de qualquer dado, ele está no `uiState`. Isso elimina a "dessincronização" entre variáveis (ex: `isLoading = true` mas `error != null` ao mesmo tempo, o que é contraditório).
 
-### Por que `AndroidViewModel` e não `ViewModel` simples?
+### Por que o `PlayerViewModel` deixou de ser `AndroidViewModel`?
 
-`AndroidViewModel` recebe o `Application` context. O `ExoPlayer` e o `SimpleCache` precisam de um `Context` para funcionar. O `Application` context é seguro para ser guardado no ViewModel (não vaza como o `Activity` context), pois ele dura o mesmo tempo que o app.
+Antes, o `PlayerViewModel` era um `AndroidViewModel` para receber o `Application` (necessário ao `ExoPlayer` e ao `SimpleCache`). Agora quem precisa do `Application` é o **`ExoPlayerEngine`**, não o ViewModel.
+
+Movendo o `Context` para o engine, o `PlayerViewModel` virou um `ViewModel` comum que só depende da interface `PlayerEngine` — **zero dependências de Android/Media3**, o que o torna testável em JVM puro. A injeção do `Application` no engine real acontece na `PlayerViewModelFactory` (usada pelo helper `playerViewModel()`); nos testes, passamos um `FakePlayerEngine` que não precisa de `Context` algum.
+
+O `Application` context continua seguro de guardar (no engine, agora), pois dura o mesmo tempo que o app e não vaza como o `Activity` context.
 
 ### Por que `configChanges` no AndroidManifest?
 
