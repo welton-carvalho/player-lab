@@ -39,8 +39,16 @@ interface PlayerEngine {
     /**
      * Reproduz o item no [index] usando a fonte pré-carregada se disponível;
      * usa [config] como fallback direto caso o preload ainda não tenha terminado.
+     *
+     * [startPositionMs] permite retomar de uma posição salva — aplicado via
+     * `seekTo` logo após `prepare()` para virar uma operação atômica.
      */
-    fun playPreloadedItemAt(index: Int, config: MediaItemConfig, cacheConfig: CacheConfig)
+    fun playPreloadedItemAt(
+        index: Int,
+        config: MediaItemConfig,
+        cacheConfig: CacheConfig,
+        startPositionMs: Long = 0L
+    )
 
     fun setCurrentPreloadIndex(index: Int)
     fun invalidatePreload()

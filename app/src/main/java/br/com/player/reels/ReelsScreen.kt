@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,7 @@ import br.com.player.player.BufferConfig
 import br.com.player.player.PlayerConfig
 import br.com.player.player.ui.PlayerIntent
 import br.com.player.player.ui.PlayerViewModel
+import br.com.player.thumbnail.VideoPoster
 import br.com.player.util.playerViewModel
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.delay
@@ -73,6 +75,7 @@ fun ReelsScreen(
     viewModel: PlayerViewModel = playerViewModel(bufferConfig = ReelsBufferConfig)
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val firstFrameRenderedIndex by viewModel.firstFrameRenderedIndex.collectAsState()
     val items = VideoFeedMock.items
     val pagerState = rememberPagerState(pageCount = { items.size })
 
@@ -150,10 +153,24 @@ fun ReelsScreen(
 
         // Pager transparente por cima: captura apenas o swipe vertical (troca de vídeo)
         // e o toque (pausa/retoma). Não hospeda vídeo, então nada se move ao deslizar.
+        // Cada página renderiza um VideoPoster (1º frame do item) que cobre o ContentFrame
+        // até o player desenhar o frame real do item — esmaece via fade quando a tupla
+        // (página atual && 1º frame renderizado) bate. Durante o swipe, nenhuma página
+        // satisfaz a condição → ambos posters ficam opacos, cobrindo o pixel do vídeo
+        // anterior. Estilo Instagram.
         VerticalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize()
         ) { page ->
+            // `derivedStateOf` evita recompor o Box desta página a cada mudança de
+            // `pagerState.currentPage` (que dispara durante todo o swipe). A página só
+            // recompõe quando o *resultado booleano* muda — para 29 das 30 páginas, isso
+            // nunca acontece em um swipe individual.
+            val posterVisible by remember(page) {
+                derivedStateOf {
+                    !(page == pagerState.currentPage && page == firstFrameRenderedIndex)
+                }
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -162,9 +179,18 @@ fun ReelsScreen(
                         indication = null
                     ) { viewModel.handleIntent(PlayerIntent.TogglePlayPause) }
             ) {
+                VideoPoster(
+                    mediaUrl = items[page].config.url,
+                    modifier = Modifier.fillMaxSize(),
+                    visible = posterVisible,
+                    contentScale = ContentScale.Fit
+                )
+
                 // Shown only when prefetch is active and the next page hasn't buffered yet.
                 // Visible only during a partial swipe — mirrors Instagram's thin bottom bar.
-                val isNextPage = page == pagerState.currentPage + 1
+                val isNextPage by remember(page) {
+                    derivedStateOf { page == pagerState.currentPage + 1 }
+                }
                 if (uiState.isPrefetchEnabled && isNextPage && page !in uiState.preloadedIndices) {
                     LinearProgressIndicator(
                         modifier = Modifier

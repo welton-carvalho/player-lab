@@ -10,4 +10,6 @@ interface PlayerEventListener {
     fun onPositionChanged(positionMs: Long, durationMs: Long) = Unit
     fun onMediaItemIndexChanged(index: Int) = Unit
     fun onPreloadCompleted(index: Int) = Unit
+    /** Renderizador desenhou o 1º frame do item atual — sinal para esmaecer o poster. */
+    fun onFirstFrameRendered() = Unit
 }

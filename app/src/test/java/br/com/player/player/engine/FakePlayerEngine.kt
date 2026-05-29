@@ -23,7 +23,14 @@ class FakePlayerEngine : PlayerEngine {
 
     val loadDirectCalls = mutableListOf<Pair<List<MediaItemConfig>, CacheConfig>>()
     val registerForPreloadCalls = mutableListOf<List<MediaItemConfig>>()
-    val playPreloadedAtCalls = mutableListOf<Triple<Int, MediaItemConfig, CacheConfig>>()
+    val playPreloadedAtCalls = mutableListOf<PlayPreloadedCall>()
+
+    data class PlayPreloadedCall(
+        val index: Int,
+        val config: MediaItemConfig,
+        val cacheConfig: CacheConfig,
+        val startPositionMs: Long
+    )
     val seekToPositionCalls = mutableListOf<Long>()
     val seekToItemCalls = mutableListOf<Pair<Int, Long>>()
 
@@ -67,8 +74,13 @@ class FakePlayerEngine : PlayerEngine {
         registerForPreloadCalls += items
     }
 
-    override fun playPreloadedItemAt(index: Int, config: MediaItemConfig, cacheConfig: CacheConfig) {
-        playPreloadedAtCalls += Triple(index, config, cacheConfig)
+    override fun playPreloadedItemAt(
+        index: Int,
+        config: MediaItemConfig,
+        cacheConfig: CacheConfig,
+        startPositionMs: Long
+    ) {
+        playPreloadedAtCalls += PlayPreloadedCall(index, config, cacheConfig, startPositionMs)
     }
 
     override fun setCurrentPreloadIndex(index: Int) { currentPreloadIndex = index }
@@ -99,5 +111,9 @@ class FakePlayerEngine : PlayerEngine {
 
     fun simulatePreloadCompleted(index: Int) {
         eventListener?.onPreloadCompleted(index)
+    }
+
+    fun simulateFirstFrameRendered() {
+        eventListener?.onFirstFrameRendered()
     }
 }

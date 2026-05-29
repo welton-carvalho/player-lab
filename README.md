@@ -15,6 +15,8 @@
 
 Sob o capô há um **sistema adaptativo** que olha para a rede (Wi-Fi/4G/3G/offline), para a RAM do device (LOW/MID/HIGH) e para o bandwidth medido em tempo real, ajustando preload e buffer dinamicamente.
 
+No Feed e no Reels o app ainda mostra um **poster com o 1º frame do vídeo** estilo Instagram (extraído em runtime via `FrameExtractor` do Media3) enquanto o vídeo não está tocando, e **retoma a reprodução de onde parou** ao voltar para um item já visto na sessão.
+
 ---
 
 ## 🛠️ Tecnologias Usadas
@@ -24,6 +26,7 @@ Sob o capô há um **sistema adaptativo** que olha para a rede (Wi-Fi/4G/3G/offl
 | **Kotlin** | Linguagem principal. |
 | **Jetpack Compose** | Cria a interface visual (telas, listas, pager) sem XML. |
 | **Media3 / ExoPlayer 1.10.1** | Motor de playback. Inclui `DefaultPreloadManager` para preload. |
+| **Media3 `inspector-frame`** | `FrameExtractor` para extrair o 1º frame dos vídeos como poster (estilo Instagram), reusando o mesmo cache LRU do player. |
 | **Jetpack Navigation 3** | Navegação entre as três telas, com `ViewModelStore` por destino. |
 | **Arquitetura MVI** | `Intent` → `ViewModel` → `State`/`Effect` → `View`. |
 | **Material Design 3 Expressive** | Sistema de design (cores, tipografia, formas) e controles (`ProgressSlider`, `PlayPauseButton`, etc.) do Media3-compose-material3. |
@@ -121,11 +124,20 @@ Player/
 │   │
 │   ├── feed/
 │   │   ├── VideoFeedScreen.kt         ← LazyColumn + autoplay do card mais visível.
+│   │   │                                Cards inativos mostram VideoPoster (1º frame).
 │   │   └── VideoFeedMock.kt           ← 30 itens com a mesma URL HLS (Mux test stream).
 │   │
 │   ├── reels/
 │   │   └── ReelsScreen.kt             ← VerticalPager full-screen + portrait lock + graça
 │   │                                    de 300 ms no spinner. Usa forcePlaylistMode = true.
+│   │                                    Empilha VideoPoster por página sobre o ContentFrame.
+│   │
+│   ├── thumbnail/
+│   │   ├── ThumbnailCache.kt          ← Singleton (Application) que extrai o 1º frame de
+│   │   │                                cada URL via Media3 FrameExtractor. LRU 24 bitmaps,
+│   │   │                                downscale 360 px, dedup por URL.
+│   │   └── VideoPoster.kt             ← Composable que observa o cache e renderiza o frame
+│   │                                    com fade alpha tied ao parâmetro `visible`.
 │   │
 │   ├── util/
 │   │   └── ViewModelExt.kt            ← appViewModel() e playerViewModel() helpers para
@@ -213,13 +225,18 @@ graph TD
         CM[CacheManager<br/>SimpleCache 200 MB + OkHttp]
     end
 
+    subgraph "Posters (Instagram-style)"
+        TC[ThumbnailCache<br/>FrameExtractor + LRU bitmaps]
+        VP[VideoPoster<br/>composable]
+    end
+
     MS --> VPS
     FS --> VPS
     RS --> VPS
     VPS -- "Intent" --> VM
     VM -- "comanda" --> ENG
     ENG --- EP
-    EP -- "eventos" --> VM
+    EP -- "eventos (incl. onFirstFrameRendered)" --> VM
     VM --> State
     VM --> Effects
     State -- "redesenha" --> VPS
@@ -230,6 +247,12 @@ graph TD
     DCT --> APS
     EP --> MSB
     MSB --> CM
+
+    FS --> VP
+    RS --> VP
+    VP -- "observe(url)" --> TC
+    TC --> MSB
+    VM -- "firstFrameRenderedIndex" --> VP
 ```
 
 ---
@@ -379,8 +402,17 @@ interface PlayerEngine {
     /** Caminho prefetch: registra os itens no DefaultPreloadManager. */
     fun registerForPreload(items: List<MediaItemConfig>)
 
-    /** Reproduz `index` usando a fonte pré-carregada (fallback: builda direto). */
-    fun playPreloadedItemAt(index: Int, config: MediaItemConfig, cacheConfig: CacheConfig)
+    /**
+     * Reproduz `index` usando a fonte pré-carregada (fallback: builda direto).
+     * `startPositionMs` é aplicado via `seekTo` logo após `prepare()`, suportando
+     * retomada de posição salva no caminho prefetch.
+     */
+    fun playPreloadedItemAt(
+        index: Int,
+        config: MediaItemConfig,
+        cacheConfig: CacheConfig,
+        startPositionMs: Long = 0L
+    )
 
     fun setCurrentPreloadIndex(index: Int)
     fun invalidatePreload()
@@ -402,6 +434,8 @@ interface PlayerEventListener {
     fun onPositionChanged(positionMs: Long, durationMs: Long) = Unit
     fun onMediaItemIndexChanged(index: Int) = Unit
     fun onPreloadCompleted(index: Int) = Unit
+    /** Renderizador desenhou o 1º frame do item atual — sinal para esmaecer o poster. */
+    fun onFirstFrameRendered() = Unit
 }
 ```
 
@@ -480,15 +514,25 @@ override fun registerForPreload(items: List<MediaItemConfig>) {
     preloadManager.invalidate()
 }
 
-override fun playPreloadedItemAt(index: Int, config: MediaItemConfig, cacheConfig: CacheConfig) {
+override fun playPreloadedItemAt(
+    index: Int,
+    config: MediaItemConfig,
+    cacheConfig: CacheConfig,
+    startPositionMs: Long
+) {
     val mediaItem = config.toMediaItem(mediaId = index.toString())
     val source = preloadManager.getMediaSource(mediaItem)
         ?: MediaSourceBuilder.build(app, config, cacheConfig) // fallback
     exoPlayer.setMediaSource(source)
     exoPlayer.playWhenReady = true
     exoPlayer.prepare()
+    // Retomada de posição: o seek enfileira até a timeline ficar pronta — seguro
+    // logo após `prepare()`. Sem isso, retomar um item já visto recomeçaria do 0.
+    if (startPositionMs > 0L) exoPlayer.seekTo(startPositionMs)
 }
 ```
+
+E o engine também encaminha `onRenderedFirstFrame` do `Player.Listener` para o `PlayerEventListener.onFirstFrameRendered()` — esse sinal alimenta o fade do poster (veja seção 7.12).
 
 > 💡 **Por que dois caminhos?** Porque eles otimizam UX **diferentes**:
 > - **Prefetch** (`registerForPreload` + `playPreloadedItemAt`): bom para **carrosséis com itens distintos** (Feed de cards). A cada autoplay troca a fonte do player. O cache pré-aquecido garante que o próximo item já está em disco.
@@ -605,6 +649,11 @@ data class PlayerUiState(
     val isPrefetchEnabled: Boolean = false,        // true se está no caminho de preload
     val preloadedIndices: Set<Int> = emptySet()    // índices que terminaram preload
 )
+
+// Fora do UiState (StateFlow separado): índice do item cujo 1º frame já foi
+// desenhado. Composables de poster observam pra esmaecer no momento exato em que
+// o pixel real aparece — `null` significa "ninguém renderizou ainda no item atual".
+val firstFrameRenderedIndex: StateFlow<Int?>
 ```
 
 Intents e efeitos:
@@ -648,17 +697,34 @@ private fun loadMediaList(config: PlayerConfig) {
 }
 ```
 
-E a troca de item, sensível ao caminho ativo:
+E a troca de item, sensível ao caminho ativo — agora **com captura e restauração de posição** (retomada estilo Instagram):
 
 ```kotlin
 is PlayerIntent.PlayItemAt -> {
     if (prefetchEnabled) {
-        if (intent.index != currentPlayingIndex) playItemAt(intent.index)  // setMediaSource + prepare
+        if (intent.index != currentPlayingIndex) {
+            captureCurrentPosition()         // ① salva posição do item que está saindo
+            playItemAt(intent.index)         // ② playPreloadedItemAt já recebe startPositionMs
+        }
     } else {
-        engine.seekToItem(intent.index, 0L)                                // seekTo(index, 0)
+        if (intent.index != currentPlayingIndex) captureCurrentPosition()
+        engine.seekToItem(intent.index, savedPositions[intent.index] ?: 0L)
     }
 }
+
+// Em algum lugar do VM:
+private val savedPositions = mutableMapOf<Int, Long>()   // mediaId → ms
+
+private fun captureCurrentPosition() {
+    val pos = engine.currentPosition
+    val dur = engine.duration
+    if (pos > 0L && dur > 0L) savedPositions[currentPlayingIndex] = pos
+    // Guarda evita sobrescrever uma posição real com 0L durante recargas em que
+    // currentPosition/duration ainda não foram populados.
+}
 ```
+
+Quando o player termina (`STATE_ENDED`), `savedPositions[currentPlayingIndex]` é **removido** — assim a próxima visita ao item reinicia do 0 em vez de cair no ~durationMs. Em `LoadMediaList`, o mapa é zerado: posições salvas só fazem sentido dentro da mesma playlist.
 
 #### StateFlow vs SharedFlow — Quando usar cada um
 
@@ -787,7 +853,7 @@ snapshotFlow {
 
 > 💡 **Por que `collectLatest`?** Ele cancela o `delay` anterior se o índice mudar antes dos 250 ms — só o último valor sobrevive. `collect` simples enfileiraria todas as transições.
 
-O `VideoFeedCard` mantém uma altura fixa de 220 dp para o `Box` que hospeda o player (`VideoPlayerScreen(pauseOnDispose = false)`). Cards inativos mostram um ícone play em vez do player — assim só **um** ExoPlayer está renderizando por vez.
+O `VideoFeedCard` mantém uma altura fixa de 220 dp para o `Box` que hospeda o player (`VideoPlayerScreen(pauseOnDispose = false)`). Cards inativos mostram **`VideoPoster`** com o 1º frame extraído do vídeo (estilo Instagram) em vez de uma caixa preta com ícone de play — assim só **um** ExoPlayer está renderizando por vez, mas o usuário sempre tem prévia visual de quem vem a seguir. Card ativo empilha o `VideoPlayerScreen` por cima do `VideoPoster`, e o poster esmaece quando `firstFrameRenderedIndex == index` (evita o flash preto durante o buffer).
 
 ---
 
@@ -843,10 +909,24 @@ fun ReelsScreen(viewModel: PlayerViewModel = playerViewModel(bufferConfig = Reel
         if (showSpinner) CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
 
         // ⑤ VerticalPager TRANSPARENTE por cima — capta swipe e toque, não hospeda vídeo.
+        //    Cada página renderiza um VideoPoster (1º frame do item) que cobre o
+        //    ContentFrame até o engine sinalizar `onRenderedFirstFrame` para aquele índice.
         VerticalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            val posterVisible by remember(page) {
+                derivedStateOf {
+                    !(page == pagerState.currentPage && page == firstFrameRenderedIndex)
+                }
+            }
             Box(Modifier.fillMaxSize().clickable(noindication) {
                 viewModel.handleIntent(PlayerIntent.TogglePlayPause)
-            })
+            }) {
+                VideoPoster(
+                    mediaUrl = items[page].config.url,
+                    modifier = Modifier.fillMaxSize(),
+                    visible = posterVisible,
+                    contentScale = ContentScale.Fit
+                )
+            }
         }
     }
 }
@@ -862,9 +942,103 @@ fun ReelsScreen(viewModel: PlayerViewModel = playerViewModel(bufferConfig = Reel
 
 4. **Graça de 300 ms no spinner** — `seekToItem` ainda pode emitir `STATE_BUFFERING` por dezenas de ms até o primeiro frame. Se sumir antes de 300 ms, `LaunchedEffect` cancela o `delay` e o spinner nunca aparece. Em rede genuinamente lenta, ele aparece após a graça.
 
-5. **`VerticalPager` transparente por cima de um `ContentFrame` fixo** — uma única `Surface` para o vídeo, que não se move entre composables ao deslizar. O pager existe só para capturar gesto e definir `currentPage`.
+5. **`VerticalPager` transparente por cima de um `ContentFrame` fixo** — uma única `Surface` para o vídeo, que não se move entre composables ao deslizar. O pager existe só para capturar gesto e definir `currentPage`. **Cada página também hospeda um `VideoPoster`**: durante o swipe, todas as posters em trânsito ficam opacas (a condição `page == currentPage && page == firstFrameRenderedIndex` não é satisfeita por nenhuma página enquanto a animação ocorre), cobrindo qualquer pixel residual do item anterior. Quando o pager assenta e o engine renderiza o 1º frame do novo item, só a poster daquela página esmaece.
 
-> 📖 **Mais detalhes**: `docs/video-preload-cache.md` contém a spec original do sistema adaptativo.
+> 📖 **Mais detalhes**: `docs/video-preload-cache.md` contém a spec original do sistema adaptativo. A seção 7.12 abaixo cobre o `ThumbnailCache` e o `VideoPoster` em profundidade.
+
+---
+
+### 7.12 🖼️ `ThumbnailCache` + `VideoPoster` — Posters Estilo Instagram
+
+Duas peças que entregam a UX "vídeos próximos já mostram a primeira imagem do conteúdo, e ao voltar a um vídeo já visto, ele retoma de onde parou":
+
+#### `ThumbnailCache.kt` — Cache de 1º frame por URL
+
+Singleton de Application que extrai o 1º frame de cada URL via **`androidx.media3.inspector.frame.FrameExtractor`** (módulo `media3-inspector-frame` da Media3 1.10+) e mantém um LRU em memória das `Bitmap`s prontas.
+
+```kotlin
+@UnstableApi
+class ThumbnailCache private constructor(private val app: Application) {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val lru = object : LinkedHashMap<String, Bitmap>(16, 0.75f, /* accessOrder = */ true) {
+        override fun removeEldestEntry(e: Map.Entry<String, Bitmap>) = size > MAX_ENTRIES
+    }
+    private val flows: MutableMap<String, MutableStateFlow<Bitmap?>> = mutableMapOf()
+    private val inFlight: MutableMap<String, Job> = mutableMapOf()
+
+    fun observe(url: String): StateFlow<Bitmap?> { /* dedup + lazy startExtraction */ }
+
+    private suspend fun extract(url: String): Bitmap? = withContext(Dispatchers.IO) {
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setMimeType(detectMimeType(url))      // explicit HLS/DASH MIME pra evitar inferência falha
+            .build()
+        val extractor = FrameExtractor.Builder(app, mediaItem)
+            .setMediaSourceFactory(MediaSourceBuilder.createFactory(app, CacheConfig()))
+            .build()
+        try {
+            val deferred = CompletableDeferred<Bitmap?>()
+            val future = extractor.getFrame(POSTER_POSITION_MS)   // 2000 ms — evita slates pretos iniciais
+            future.addListener({ runCatching { future.get().bitmap }.fold(deferred::complete, deferred::completeExceptionally) }, { it.run() })
+            val raw = deferred.await() ?: return@withContext null
+            downscale(raw)                          // ARGB_8888 software, ~360 px de largura
+        } finally {
+            extractor.close()                       // cada FrameExtractor é vinculado a um MediaItem
+        }
+    }
+}
+```
+
+**Quatro decisões que justificam por que ficou assim:**
+
+1. **Chave do cache = URL (não índice).** Os 30 itens do mock compartilham a mesma URL → **1** extração no app inteiro, não 30.
+2. **Reusa `MediaSourceBuilder.createFactory(...)`.** Garante que bytes baixados pelo FrameExtractor entram no mesmo SimpleCache LRU de 200 MB do player. Pipeline HLS + OkHttp + cache compartilhado.
+3. **`getFrame(2000L)` em vez de `getFrame(0L)` ou `getThumbnail()`.** Muitas streams (inclusive a de teste da Mux) começam com slate preto ou fade-in. `getThumbnail()` da Media3 cai pra posição 0 quando a heurística interna não acha algo melhor. 2 s já está dentro do conteúdo real e ainda no primeiro segmento HLS.
+4. **Downscale para ~360 px + LRU de 24 entradas.** Teto de memória ~15 MB. Sem `Bitmap.recycle()` — Compose pode estar exibindo a bitmap evict; o GC libera quando ninguém referencia.
+
+#### `VideoPoster.kt` — Composable que mostra o frame com fade
+
+```kotlin
+@Composable
+fun VideoPoster(
+    mediaUrl: String,
+    modifier: Modifier = Modifier,
+    visible: Boolean = true,
+    contentScale: ContentScale = ContentScale.Crop
+) {
+    val cache = remember { ThumbnailCache.get(LocalContext.current.applicationContext as Application) }
+    val bitmap by remember(mediaUrl, cache) { cache.observe(mediaUrl) }.collectAsState()
+    val alpha by animateFloatAsState(if (visible) 1f else 0f, label = "posterFade")
+
+    Box(modifier = modifier) {
+        val current = bitmap
+        if (current == null) {
+            // Placeholder enquanto a extração não terminou.
+            Box(Modifier.fillMaxSize().alpha(alpha).background(Color.Black))
+        } else {
+            val imageBitmap = remember(current) { current.asImageBitmap() }
+            Image(
+                bitmap = imageBitmap,
+                contentDescription = null,
+                contentScale = contentScale,
+                alpha = alpha,                            // alpha no Image, NÃO via graphicsLayer
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+```
+
+**Por que `alpha` direto no `Image.alpha`** (e não `Modifier.graphicsLayer { alpha }` no Box pai)? Uma tentativa anterior usava `graphicsLayer` — funcionava na maior parte do tempo, mas tinha um bug sutil: quando a bitmap chegava por recomposição, o **conteúdo do layer cacheado na GPU não invalidava** e o `Image` só aparecia depois que o usuário fazia scroll (forçando re-layout do LazyColumn). O parâmetro nativo `Image.alpha` multiplica o alpha no draw direto, sem criar render layer cacheado, então cada update de bitmap pinta imediatamente.
+
+#### O sinal "1º frame renderizado" amarrando tudo
+
+O `firstFrameRenderedIndex: StateFlow<Int?>` do `PlayerViewModel` é populado por `onFirstFrameRendered` (vindo do `Player.Listener.onRenderedFirstFrame` do ExoPlayer, encaminhado pelo `ExoPlayerEngine`). Ele é **resetado para `null` em `onMediaItemTransition`** — então quando o usuário troca de item, o poster do novo item volta opaco imediatamente, cobrindo qualquer pixel residual do anterior, até o renderer pintar o 1º frame do novo item.
+
+**A fórmula de `visible`** para cada página/card:
+- **Reels (1 poster por página do VerticalPager):** `visible = !(page == pagerState.currentPage && page == firstFrameRenderedIndex)`. Durante swipe, nenhuma página satisfaz → todos opacos. Quando assenta e renderiza → só a página atual esmaece.
+- **Feed (poster empilhado sob o player no card ativo + sozinho no card inativo):** `visible = !(isActive && firstFrameRenderedIndex == index)`. Inativos sempre opacos. Ativo opaco até o 1º frame ser pintado.
 
 ---
 
@@ -916,7 +1090,7 @@ Graças à camada `PlayerEngine`, o VM é testado **sem emulador**:
 
 | Arquivo | Papel |
 |---|---|
-| `FakePlayerEngine.kt` | Implementa `PlayerEngine` em Kotlin puro. Grava chamadas (`loadDirectCalls`, `registerForPreloadCalls`, `playPreloadedAtCalls`, `seekToItemCalls`, ...) e expõe `simulate...()` para disparar eventos como se viessem do ExoPlayer. |
+| `FakePlayerEngine.kt` | Implementa `PlayerEngine` em Kotlin puro. Grava chamadas (`loadDirectCalls`, `registerForPreloadCalls`, `playPreloadedAtCalls: List<PlayPreloadedCall>` — data class com `index`/`config`/`cacheConfig`/`startPositionMs`, `seekToItemCalls`, ...) e expõe `simulate...()` para disparar eventos como se viessem do ExoPlayer (incluindo `simulateFirstFrameRendered()`). |
 | `MainDispatcherRule.kt` | Substitui `Dispatchers.Main` por `TestDispatcher` — o `viewModelScope` usa Main, então sem essa regra o `runTest` quebra. |
 | `PlayerViewModelTest.kt` | 27 testes: carga (1 item vs multi-item), navegação na playlist, retry, prefetch on/off, propagação de `preloadedIndices`, reset entre cargas, etc. |
 
@@ -969,6 +1143,7 @@ Ou no Android Studio: clique direito em `app/src/test` → `Run Tests`.
 1. MainScreen ou VideoFeedScreen: viewModel.handleIntent(LoadMediaList(playerConfig))
 2. PlayerViewModel.loadMediaList:
      prefetchEnabled = mediaList.size > 1 && !forcePlaylistMode  → true
+     savedPositions.clear(); firstFrameRenderedIndex = null
      engine.registerForPreload(items)
      playItemAt(0)
 3. ExoPlayerEngine.registerForPreload:
@@ -978,15 +1153,20 @@ Ou no Android Studio: clique direito em `app/src/test` → `Run Tests`.
      → DefaultPreloadManager pergunta a AdaptivePreloadStatusControl o quanto preloadar cada índice
      → policy.distance1Ms = 5_000 (Wi-Fi) → baixa 5 s do índice 1 no SimpleCache
 4. PlayerViewModel.playItemAt(0):
-     engine.playPreloadedItemAt(0, item, cacheConfig)
+     startPositionMs = savedPositions[0] ?: 0L                  // ← retomada de sessão
+     engine.playPreloadedItemAt(0, item, cacheConfig, startPositionMs)
        → source = preloadManager.getMediaSource(item) (já preparado)
-       → exoPlayer.setMediaSource(source); prepare()
-     engine.setCurrentPreloadIndex(0)   // dispara reavaliação dos preloads
+       → exoPlayer.setMediaSource(source); prepare(); seekTo(startPositionMs)
+     engine.setCurrentPreloadIndex(0)
 5. ExoPlayer dispara onPlaybackStateChanged → uiState.isBuffering toggla
-6. Vídeo aparece. PreloadManager.onCompleted(item1) → uiState.preloadedIndices += 1
+   ThumbnailCache.observe(url) por trás disparou extract → 1º frame chega → posters dos cards inativos pintam.
+6. Vídeo aparece. onRenderedFirstFrame → firstFrameRenderedIndex = 0 → poster do card ativo esmaece.
+   PreloadManager.onCompleted(item1) → uiState.preloadedIndices += 1
 7. Usuário rola → LaunchedMostVisible(250 ms debounce) → handleIntent(PlayItemAt(2))
-8. PlayerViewModel: prefetchEnabled = true → playItemAt(2)
-9. (Volta a 4 com index = 2)
+8. PlayerViewModel.handleIntent(PlayItemAt(2)):
+     captureCurrentPosition() salva savedPositions[0] = engine.currentPosition (se > 0)
+     playItemAt(2) com startPositionMs = savedPositions[2] ?: 0L
+9. (Volta a 4 com index = 2; se o usuário voltar pro 0 depois, retoma de onde parou)
 ```
 
 ### Fluxo B — Caminho playlist (Reels)
@@ -1001,14 +1181,19 @@ Ou no Android Studio: clique direito em `app/src/test` → `Run Tests`.
      exoPlayer.prepare()                       // UMA vez na vida da tela
      ExoPlayer.setPreloadConfiguration(5_000_000L) já foi feito no init →
        Media3 começa a pré-bufferizar o item 1 enquanto o 0 toca.
+    Em paralelo: ThumbnailCache extrai o 1º frame da URL (1 vez para todas as 30 cópias),
+    posters de todas as páginas do VerticalPager passam de placeholder preto pro frame.
 4. Usuário dá swipe vertical:
      pagerState.targetPage muda durante a animação
      → handleIntent(PlayItemAt(target))
-     → engine.seekToItem(target, 0L)
-     → exoPlayer.seekTo(target, 0)             // SEM tear-down do pipeline
-5. Item 1 já estava com 5 s prontos → primeiro frame imediato.
+     → captureCurrentPosition() salva savedPositions[currentPlayingIndex]
+     → engine.seekToItem(target, savedPositions[target] ?: 0L)   // retoma de onde parou
+     → exoPlayer.seekTo(target, position)                        // SEM tear-down do pipeline
+5. onMediaItemTransition → firstFrameRenderedIndex = null → poster do novo item volta opaco.
+   Item alvo já estava com 5 s prontos → primeiro frame imediato → onRenderedFirstFrame →
+   firstFrameRenderedIndex = target → poster da página atual esmaece.
    Se houve brief STATE_BUFFERING: graça de 300 ms suprime o spinner.
-6. ExoPlayer começa preload do item 2 (vizinho do novo currentItem).
+6. ExoPlayer começa preload do item seguinte (vizinho do novo currentItem).
 ```
 
 ---
@@ -1047,6 +1232,12 @@ Componente do Media3 que pré-bufferiza fontes de mídia em uma queue de itens. 
 
 ### Preload "interno da playlist" (`ExoPlayer.setPreloadConfiguration`)
 Mecanismo separado do `DefaultPreloadManager`. Atua sobre os itens **dentro de uma playlist do próprio ExoPlayer** (`addMediaSource`/`setMediaSources`), pré-bufferizando o próximo item. Usado no caminho playlist (Reels).
+
+### FrameExtractor (Media3 `inspector-frame`)
+Classe `androidx.media3.inspector.frame.FrameExtractor` que extrai uma `Bitmap` de uma posição específica de um vídeo, usando o mesmo pipeline do ExoPlayer (HLS/DASH, OkHttp, cache). Substituiu `ExperimentalFrameExtractor` (que estava em `media3-transformer`) a partir da 1.10.0. No app é usada pelo `ThumbnailCache` para gerar posters do 1º frame.
+
+### Poster (estilo Instagram)
+Imagem estática (o 1º frame do vídeo) renderizada sobre/junto do `ContentFrame` enquanto o vídeo não está sendo reproduzido. Esmaece quando o renderer pinta o frame real. Implementado por `VideoPoster` + `ThumbnailCache` no app.
 
 ### ContentScale (Compose)
 Como o `ContentFrame` do Media3 ajusta o vídeo dentro do seu container: `Fit` (preserva proporção, pode letterboxar), `FillBounds` (estica), `Crop` (zoom + corta), `Inside` (Fit sem ampliar). O app usa **`Fit` em todos os lugares**.
@@ -1123,6 +1314,20 @@ VideoPlayerScreen(
 )
 ```
 
+### Mostrar o poster (1º frame) de um vídeo qualquer
+
+```kotlin
+// Em qualquer composable, em qualquer lugar — o ThumbnailCache é singleton.
+VideoPoster(
+    mediaUrl = "https://exemplo.com/video.m3u8",
+    modifier = Modifier.size(width = 180.dp, height = 320.dp),
+    visible = true,                  // false → faz fade-out
+    contentScale = ContentScale.Crop // ou Fit
+)
+```
+
+A primeira chamada para uma URL dispara a extração via `FrameExtractor` (~2-3 s no celular médio); chamadas seguintes pegam a bitmap cacheada e renderizam imediatamente. Para amarrar o fade ao 1º frame que o player desenhou no mesmo item, observe `viewModel.firstFrameRenderedIndex` e calcule `visible` a partir disso (veja `VideoFeedScreen` e `ReelsScreen` como referência).
+
 ---
 
 ## 💡 Decisões de Projeto — Por Que Foi Feito Assim?
@@ -1175,6 +1380,26 @@ Reels precisa de fast-start. Esperar 2.5 s entre swipes seria insuportável. 800
 ### Por que não vamos no caminho prefetch para Reels (que pareceria simétrico)?
 
 Porque `playPreloadedItemAt` faz `setMediaSource + prepare()` por troca de item — **sempre** dispara `STATE_BUFFERING` no listener, **mesmo** quando a fonte está totalmente preloadada. O custo é da reinicialização do pipeline (renderers, track selection), não do download. O caminho playlist evita esse custo porque o pipeline é o mesmo entre itens.
+
+### Por que `FrameExtractor` em vez de `MediaMetadataRetriever` (framework Android)?
+
+`android.media.MediaMetadataRetriever` é mais simples, mas seu pipeline interno (Stagefright) tem suporte frágil a HLS em vários OEMs, não respeita o `CacheDataSource` do projeto (re-baixa segmentos derrotando o LRU de 200 MB) e não tem integração com o `OkHttpDataSource`. O `FrameExtractor` da Media3 reusa **exatamente** o pipeline do player (mesmo factory de mídia, mesmo cache), então um byte baixado pelo poster aproveita ao player e vice-versa.
+
+### Por que `getFrame(2000L)` e não `getThumbnail()` ou `getFrame(0L)`?
+
+Muitas streams (inclusive a de teste da Mux que está no mock) começam com slate preto ou fade-in. `getFrame(0L)` literalmente pega esse frame preto. `getThumbnail()` da Media3 usa heurística interna, mas **cai pra posição 0** quando não acha nada melhor — mesmo problema no fim. 2 000 ms já cai dentro do conteúdo real e ainda está no primeiro segmento HLS (~6 s), então não força download adicional além do que o player já vai fazer.
+
+### Por que alpha no `Image` e não `Modifier.graphicsLayer { alpha }`?
+
+`Modifier.graphicsLayer` cria um render layer cacheado na GPU. Funciona para animações puras de propriedades, mas quando o **conteúdo** do layer muda por recomposição (ex.: bitmap chegou via `StateFlow`), o cache **não invalida automaticamente** em todos os casos. Sintoma observado: o frame só aparecia depois que o `LazyColumn` reciclava o item via scroll. O parâmetro `alpha` do `Image` (e `Modifier.alpha` no placeholder) multiplica direto no draw, sem layer cacheado — atualização imediata.
+
+### Por que `savedPositions` é em memória apenas (sem DataStore)?
+
+Combinado com o usuário durante o design: a feature mira "voltar pro item de cima na mesma sessão" (caso clássico do Instagram), não "lembrar de onde parei dias atrás". DataStore + serialização seriam infraestrutura extra para um benefício que o produto explicitamente não quer. Process death reseta, por design.
+
+### Por que a chave do `ThumbnailCache` é a URL e não o índice?
+
+Os 30 itens do mock compartilham a mesma URL (test stream da Mux). Se o cache fosse keyed por índice, faríamos **30 extrações** da mesma frame. Keyed por URL → **1** extração, todos os índices observam o mesmo `StateFlow`. Em produção com URLs distintas, cada URL extrai uma vez e o LRU descarta as menos usadas.
 
 ---
 

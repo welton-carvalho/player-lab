@@ -103,6 +103,12 @@ class ExoPlayerEngine(
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             eventListener?.onMediaItemIndexChanged(exoPlayer.currentMediaItemIndex)
         }
+
+        override fun onRenderedFirstFrame() {
+            // Sinal único: o renderizador desenhou o 1º frame do item corrente.
+            // O VM correlaciona com `currentMediaItemIndex` lido aqui em cima.
+            eventListener?.onFirstFrameRendered()
+        }
     }
 
     init {
@@ -157,7 +163,12 @@ class ExoPlayerEngine(
         preloadManager.invalidate()
     }
 
-    override fun playPreloadedItemAt(index: Int, config: MediaItemConfig, cacheConfig: CacheConfig) {
+    override fun playPreloadedItemAt(
+        index: Int,
+        config: MediaItemConfig,
+        cacheConfig: CacheConfig,
+        startPositionMs: Long
+    ) {
         // Mesmo mediaId usado no registro (índice) para casar a busca no preload manager.
         val mediaItem = config.toMediaItem(mediaId = index.toString())
         val source = preloadManager.getMediaSource(mediaItem)
@@ -165,6 +176,10 @@ class ExoPlayerEngine(
         exoPlayer.setMediaSource(source)
         exoPlayer.playWhenReady = true
         exoPlayer.prepare()
+        if (startPositionMs > 0L) {
+            // seekTo enfileira até a timeline ficar pronta — seguro logo após prepare().
+            exoPlayer.seekTo(startPositionMs)
+        }
     }
 
     override fun setCurrentPreloadIndex(index: Int) {

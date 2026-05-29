@@ -66,6 +66,11 @@ dependencies {
     implementation(libs.androidx.media3.ui.compose)
     implementation(libs.androidx.media3.ui.compose.material3)
     implementation(libs.androidx.media3.datasource.okhttp)
+    // media3-inspector-frame expõe `FrameExtractor` (renamed/movido na 1.10.0 do
+    // antigo `ExperimentalFrameExtractor` em media3-transformer). Usado pelo
+    // ThumbnailCache para extrair o 1º frame dos vídeos como poster — não afeta
+    // o pipeline de playback.
+    implementation(libs.androidx.media3.inspector.frame)
     implementation(libs.okhttp)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

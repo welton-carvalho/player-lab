@@ -64,7 +64,7 @@ class PlayerViewModelTest {
 
         assertEquals(1, fakeEngine.registerForPreloadCalls.size)
         assertEquals(multiItems, fakeEngine.registerForPreloadCalls.first())
-        assertEquals(0, fakeEngine.playPreloadedAtCalls.first().first)
+        assertEquals(0, fakeEngine.playPreloadedAtCalls.first().index)
         assertEquals(3, viewModel.uiState.value.totalItems)
     }
 
@@ -120,7 +120,7 @@ class PlayerViewModelTest {
         viewModel.handleIntent(PlayerIntent.PlayItemAt(2))
 
         val calls = fakeEngine.playPreloadedAtCalls
-        assertEquals(2, calls.last().first)
+        assertEquals(2, calls.last().index)
         assertEquals(2, viewModel.uiState.value.currentIndex)
     }
 
@@ -154,7 +154,7 @@ class PlayerViewModelTest {
 
         viewModel.handleIntent(PlayerIntent.NextItem)
 
-        assertEquals(1, fakeEngine.playPreloadedAtCalls.last().first)
+        assertEquals(1, fakeEngine.playPreloadedAtCalls.last().index)
     }
 
     @Test
@@ -177,7 +177,7 @@ class PlayerViewModelTest {
 
         viewModel.handleIntent(PlayerIntent.PreviousItem)
 
-        assertEquals(1, fakeEngine.playPreloadedAtCalls.last().first)
+        assertEquals(1, fakeEngine.playPreloadedAtCalls.last().index)
     }
 
     @Test

@@ -11,17 +11,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -41,6 +37,7 @@ import br.com.player.player.PlayerConfig
 import br.com.player.player.ui.PlayerIntent
 import br.com.player.player.ui.PlayerViewModel
 import br.com.player.player.ui.VideoPlayerScreen
+import br.com.player.thumbnail.VideoPoster
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -60,6 +57,7 @@ fun VideoFeedScreen(
     viewModel: PlayerViewModel = playerViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val firstFrameRenderedIndex by viewModel.firstFrameRenderedIndex.collectAsState()
     val listState = rememberLazyListState()
     val feedItems = VideoFeedMock.items
 
@@ -99,9 +97,14 @@ fun VideoFeedScreen(
             items(feedItems, key = { it.position }) { item ->
                 val index = item.position - 1
                 val isActive = index == uiState.currentIndex
+                // Poster esmaece só quando o 1º frame do índice ativo foi renderizado.
+                // Em cards inativos a flag fica sempre true (poster cobre integralmente).
+                val posterVisible = !(isActive && firstFrameRenderedIndex == index)
                 VideoFeedCard(
                     position = item.position,
+                    mediaUrl = item.config.url,
                     isActive = isActive,
+                    posterVisible = posterVisible,
                     viewModel = viewModel
                 )
             }
@@ -141,7 +144,9 @@ private fun LaunchedMostVisible(
 @Composable
 private fun VideoFeedCard(
     position: Int,
+    mediaUrl: String,
     isActive: Boolean,
+    posterVisible: Boolean,
     viewModel: PlayerViewModel
 ) {
     ElevatedCard(
@@ -168,17 +173,17 @@ private fun VideoFeedCard(
                     .background(Color.Black),
                 contentAlignment = Alignment.Center
             ) {
+                // Poster sempre presente: cobre o card inativo integralmente e o ativo
+                // até o player renderizar o 1º frame (evita flash preto durante o buffer).
+                VideoPoster(
+                    mediaUrl = mediaUrl,
+                    modifier = Modifier.fillMaxSize(),
+                    visible = posterVisible
+                )
                 if (isActive) {
                     VideoPlayerScreen(
                         viewModel = viewModel,
                         pauseOnDispose = false
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(56.dp)
                     )
                 }
             }
