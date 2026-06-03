@@ -1,4 +1,4 @@
-# 📱 Player de Vídeo Android — Guia Completo para Devs Júniors
+# 📱 Player de Vídeo Android — Guia Completo
 
 > **Para quem é este guia?**
 > Este documento foi escrito pensando em você que está aprendendo Android e quer entender como funciona um player de vídeo de verdade — com cache, preload, feed vertical, Reels, controle adaptativo por rede e por capacidade do device. Não assumimos que você já sabe tudo: cada conceito novo vem com uma explicação em português simples e, sempre que houver uma decisão de projeto, a gente explica **por que** foi feita daquele jeito.
